@@ -1,0 +1,18 @@
+[
+  {
+    "nl": "Add a master bedroom of about 200 square feet adjacent to the main bathroom",
+    "plan_id": "test_001"
+  },
+  {
+    "nl": "Make the kitchen at least 150 square feet",
+    "plan_id": "test_001"
+  },
+  {
+    "nl": "Add a hallway connecting the living room and the kitchen",
+    "plan_id": "test_001"
+  },
+  {
+    "nl": "Remove the office",
+    "plan_id": "test_001"
+  }
+]

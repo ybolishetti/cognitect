@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.whl
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Secrets — NEVER commit
+.env
+*.key
+*.pem
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+
+# mypy / type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# FreeCAD outputs (generated files)
+*.FCStd
+*.FCBak
+*.dxf
+*.dwg
+*.pdf
+/tmp/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Docker
+.docker/
+
+# Logs
+*.log
+logs/
+
+# AppImage (too large for git — download via smoke_test_freecad.sh)
+*.AppImage
+/data/
+
+# Node (for Phase 4 frontend)
+node_modules/
+.next/
+out/

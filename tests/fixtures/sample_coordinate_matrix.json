@@ -1,0 +1,29 @@
+{
+  "plan_id": "test_001",
+  "rooms": 3,
+  "coordinate_matrix": {
+    "living_room": {
+      "x": 0.0,
+      "y": 0.0,
+      "width": 20.0,
+      "height": 15.0
+    },
+    "kitchen": {
+      "x": 20.0,
+      "y": 0.0,
+      "width": 12.0,
+      "height": 12.5
+    },
+    "master_bedroom": {
+      "x": 32.0,
+      "y": 0.0,
+      "width": 14.14,
+      "height": 14.14
+    }
+  },
+  "notes": {
+    "living_room": "area=300 sqft, aspect_ratio=1.33",
+    "kitchen": "area=150 sqft, aspect_ratio=0.96",
+    "master_bedroom": "area=200 sqft, aspect_ratio=1.0 (square)"
+  }
+}

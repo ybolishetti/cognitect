@@ -1,0 +1,64 @@
+[
+  {
+    "op_type": "add_room",
+    "target_room_id": null,
+    "room_spec": {
+      "name": "Master Bedroom",
+      "room_type": "bedroom",
+      "area_sqft": 200.0,
+      "min_area_sqft": null,
+      "max_area_sqft": null,
+      "aspect_ratio": null,
+      "adjacency_requirements": ["main_bathroom"]
+    },
+    "constraint_spec": null,
+    "connection_spec": null,
+    "metadata": {
+      "confidence": 0.92,
+      "raw_nl": "Add a master bedroom of about 200 square feet adjacent to the main bathroom"
+    }
+  },
+  {
+    "op_type": "set_constraint",
+    "target_room_id": "kitchen",
+    "room_spec": null,
+    "constraint_spec": {
+      "constraint_type": "min_area",
+      "room_id": "kitchen",
+      "value": 150.0,
+      "strength": "strong"
+    },
+    "connection_spec": null,
+    "metadata": {
+      "confidence": 0.97,
+      "raw_nl": "Make the kitchen at least 150 square feet"
+    }
+  },
+  {
+    "op_type": "add_connection",
+    "target_room_id": null,
+    "room_spec": null,
+    "constraint_spec": null,
+    "connection_spec": {
+      "room_a_id": "living_room",
+      "room_b_id": "kitchen",
+      "connection_type": "door",
+      "width_ft": 3.0
+    },
+    "metadata": {
+      "confidence": 0.95,
+      "raw_nl": "Add a hallway connecting the living room and the kitchen"
+    }
+  },
+  {
+    "op_type": "remove_room",
+    "target_room_id": "office",
+    "room_spec": null,
+    "constraint_spec": null,
+    "connection_spec": null,
+    "metadata": {
+      "confidence": 0.99,
+      "raw_nl": "Remove the office"
+    }
+  }
+]
