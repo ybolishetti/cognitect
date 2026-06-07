@@ -38,12 +38,22 @@ class CADGenerator:
     SLA: 5–15s
     """
 
+    # FreeCAD is invoked via its extracted squashfs-root (not AppImage directly)
+    # because the server lacks libGL.so.1. The extracted AppImage bundles its own libs.
+    SQUASHFS_ROOT = Path("/data/workspace/cognitect/squashfs-root")
+    FREECADCMD = SQUASHFS_ROOT / "usr/bin/freecadcmd"
+    FREECAD_LIBS = f"{SQUASHFS_ROOT}/usr/lib:{SQUASHFS_ROOT}/usr/lib/x86_64-linux-gnu"
+
     def __init__(self, freecad_appimage_path: str | Path | None = None):
         """
         Args:
-            freecad_appimage_path: Path to FreeCAD AppImage.
+            freecad_appimage_path: Path to FreeCAD AppImage (used for reference/re-extraction).
                 Defaults to FREECAD_APPIMAGE_PATH env var or
                 /data/workspace/freecad/FreeCAD.AppImage
+
+        NOTE: On this server, FreeCAD is run via the extracted squashfs-root
+        with LD_LIBRARY_PATH set to its bundled libs (libGL not available system-wide).
+        Invocation: cd squashfs-root && LD_LIBRARY_PATH=... ./usr/bin/freecadcmd -c "..."
         """
         import os
         if freecad_appimage_path:
@@ -76,13 +86,17 @@ class CADGenerator:
         """
         # TODO: Implement via Cursor Composer — see DRAFT_CAD_GENERATOR.md
         # Implementation outline:
-        # 1. Check self.appimage_path exists
+        # 1. Check self.FREECADCMD exists (squashfs-root extracted)
         # 2. Write coordinate_matrix to a temp JSON file
-        # 3. subprocess.run([str(self.appimage_path), "--appimage-extract-and-run",
-        #                    "--headless", "-c", f"exec(open('{script_path}').read())"],
-        #                   input=json_payload, capture_output=True, timeout=30)
+        # 3. env = {**os.environ, "LD_LIBRARY_PATH": self.FREECAD_LIBS}
+        #    subprocess.run(
+        #        [str(self.FREECADCMD), "-c", f"exec(open('{script_path}').read())"],
+        #        env=env, cwd=str(self.SQUASHFS_ROOT),
+        #        input=json_payload, capture_output=True, timeout=30
+        #    )
         # 4. Parse stdout for "FREECAD_OK: /path/to/file"
         # 5. Return Path to .FCStd
+        # NOTE: Do NOT use --appimage-extract-and-run — use squashfs-root directly
         raise NotImplementedError(
             "CADGenerator.generate() is pending Cursor Composer implementation. "
             "See DRAFT_CAD_GENERATOR.md for the full spec."

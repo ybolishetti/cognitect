@@ -82,3 +82,6 @@ logs/
 node_modules/
 .next/
 out/
+
+# FreeCAD extracted AppImage (649MB — not committed)
+squashfs-root/
