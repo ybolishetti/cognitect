@@ -3,9 +3,8 @@ Tests for engine/exporter/
 
 Verifies:
 - PlanExporter is importable
-- export_dxf() raises NotImplementedError (stub)
-- export_pdf() raises NotImplementedError (stub)
-- export_from_matrix() raises NotImplementedError (stub)
+- export_from_matrix() produces valid DXF
+- export_dxf() delegates to export_from_matrix()
 - ExportError is importable
 """
 
@@ -30,34 +29,35 @@ class TestPlanExporterImport:
             raise ExportError("test export failure")
 
 
-class TestPlanExporterStubs:
-    """Verify all stub methods raise NotImplementedError with helpful messages."""
-
+class TestPlanExporter:
     def setup_method(self):
         self.exporter = PlanExporter()
         self.model_path = Path("/tmp/test_plan.FCStd")
+        self.coordinate_matrix = {
+            "living_room": {"x": 0.0, "y": 0.0, "width": 20.0, "height": 15.0}
+        }
         self.metadata = {
             "plan_id": "test_001",
             "project_name": "Test Project",
+            "coordinate_matrix": self.coordinate_matrix,
             "rooms": {
-                "living_room": {"x": 0.0, "y": 0.0, "width": 20.0, "height": 15.0}
+                "living_room": {"name": "Living Room", "room_type": "living"}
             },
         }
 
-    def test_export_dxf_raises_not_implemented(self):
-        with pytest.raises(NotImplementedError) as exc_info:
-            self.exporter.export_dxf(self.model_path, self.metadata)
-        assert "DRAFT_EXPORTER.md" in str(exc_info.value)
+    def test_export_from_matrix_produces_dxf(self):
+        dxf_path = self.exporter.export_from_matrix(
+            self.coordinate_matrix, self.metadata
+        )
+        assert dxf_path.exists()
+        assert dxf_path.suffix == ".dxf"
+        assert dxf_path.stat().st_size > 100
 
-    def test_export_pdf_raises_not_implemented(self):
-        with pytest.raises(NotImplementedError) as exc_info:
-            self.exporter.export_pdf(self.model_path, self.metadata)
-        assert "DRAFT_EXPORTER.md" in str(exc_info.value)
+    def test_export_dxf_delegates_to_matrix(self):
+        dxf_path = self.exporter.export_dxf(self.model_path, self.metadata)
+        assert dxf_path.exists()
+        assert dxf_path.suffix == ".dxf"
 
-    def test_export_from_matrix_raises_not_implemented(self):
-        coordinate_matrix = {
-            "living_room": {"x": 0.0, "y": 0.0, "width": 20.0, "height": 15.0}
-        }
-        with pytest.raises(NotImplementedError) as exc_info:
-            self.exporter.export_from_matrix(coordinate_matrix, self.metadata)
-        assert "DRAFT_EXPORTER.md" in str(exc_info.value)
+    def test_export_dxf_requires_rooms_key(self):
+        with pytest.raises(ExportError):
+            self.exporter.export_dxf(self.model_path, {"plan_id": "x"})

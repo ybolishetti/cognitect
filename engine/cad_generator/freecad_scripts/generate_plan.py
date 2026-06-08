@@ -7,23 +7,21 @@ It receives the coordinate matrix via stdin (JSON) and writes a .FCStd file.
 Architecture note: This script has NO access to the main Python environment.
 It runs isolated inside the FreeCAD AppImage's own Python 3.11 interpreter.
 All data exchange must be via stdin/stdout/files.
-
-STUB: Full implementation in DRAFT_CAD_GENERATOR.md
 """
 
 import json
 import sys
 
-def generate_floor_plan(coordinate_matrix: dict, output_path: str) -> None:
+
+def generate_floor_plan(
+    coordinate_matrix: dict, output_path: str, metadata: dict = None
+) -> None:
     """
     Generate a 3D BRep floor plan model from a coordinate matrix.
 
-    Args:
-        coordinate_matrix: {room_id: {x, y, width, height}} in feet
-        output_path: Path to write the .FCStd file
-
-    Raises:
-        RuntimeError: If FreeCAD generation fails.
+    coordinate_matrix: {room_id: {x, y, width, height}} in feet
+    output_path: Path to write the .FCStd file
+    metadata: optional dict with room names/types (from payload)
     """
     try:
         import FreeCAD
@@ -34,31 +32,49 @@ def generate_floor_plan(coordinate_matrix: dict, output_path: str) -> None:
         print(f"FREECAD_ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 
-    WALL_HEIGHT_FT = 9.0
-    FT_TO_MM = 304.8  # FreeCAD uses mm internally
+    FT_TO_MM = 304.8
+    WALL_HEIGHT_MM = 9.0 * FT_TO_MM  # 9ft ceiling = 2743.2mm
+    WALL_WIDTH_MM = 200.0  # 200mm wall thickness (standard)
 
     doc = FreeCAD.newDocument("FloorPlan")
 
-    for room_id, coords in coordinate_matrix.items():
-        x = coords["x"] * FT_TO_MM
-        y = coords["y"] * FT_TO_MM
-        w = coords["width"] * FT_TO_MM
-        h = coords["height"] * FT_TO_MM
-        wall_h = WALL_HEIGHT_FT * FT_TO_MM
+    room_names = {}
+    if metadata and "rooms" in metadata:
+        room_names = {
+            rid: info.get("name", rid) for rid, info in metadata["rooms"].items()
+        }
 
-        # Create room slab (floor)
+    for room_id, coords in coordinate_matrix.items():
+        # Convert feet to mm
+        x_mm = coords["x"] * FT_TO_MM
+        y_mm = coords["y"] * FT_TO_MM
+        w_mm = coords["width"] * FT_TO_MM
+        h_mm = coords["height"] * FT_TO_MM
+
+        # Room perimeter as a closed wire (exterior face of walls)
+        p1 = FreeCAD.Vector(x_mm, y_mm, 0)
+        p2 = FreeCAD.Vector(x_mm + w_mm, y_mm, 0)
+        p3 = FreeCAD.Vector(x_mm + w_mm, y_mm + h_mm, 0)
+        p4 = FreeCAD.Vector(x_mm, y_mm + h_mm, 0)
+
+        # Create the wall boundary wire
+        wire = Draft.makeWire([p1, p2, p3, p4], closed=True)
+        wire.Label = f"{room_id}_outline"
+
+        # Create Arch Wall
+        wall = Arch.makeWall(wire, height=WALL_HEIGHT_MM, width=WALL_WIDTH_MM)
+        wall.Label = room_names.get(room_id, room_id)
+
+        # Create floor slab using Part::Box for solid geometry
         slab = doc.addObject("Part::Box", f"{room_id}_slab")
         slab.Placement = FreeCAD.Placement(
-            FreeCAD.Vector(x, y, 0),
-            FreeCAD.Rotation()
+            FreeCAD.Vector(x_mm, y_mm, -100),  # 100mm below floor level
+            FreeCAD.Rotation(),
         )
-        slab.Length = w
-        slab.Width = h
-        slab.Height = 100  # 100mm slab thickness
-
-        # Label
-        label = doc.addObject("App::DocumentObjectGroup", f"{room_id}_group")
-        label.Label = room_id
+        slab.Length = w_mm
+        slab.Width = h_mm
+        slab.Height = 100  # 100mm slab
+        slab.Label = f"{room_names.get(room_id, room_id)} Floor"
 
     doc.recompute()
     doc.saveAs(output_path)
@@ -67,4 +83,8 @@ def generate_floor_plan(coordinate_matrix: dict, output_path: str) -> None:
 
 if __name__ == "__main__":
     data = json.load(sys.stdin)
-    generate_floor_plan(data["coordinate_matrix"], data["output_path"])
+    generate_floor_plan(
+        data["coordinate_matrix"],
+        data["output_path"],
+        metadata=data,
+    )

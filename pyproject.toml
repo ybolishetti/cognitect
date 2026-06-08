@@ -50,6 +50,9 @@ include = ["engine*", "api*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "slow: tests that invoke FreeCAD subprocess (~5-15s each)",
+]
 
 [tool.ruff]
 line-length = 100
