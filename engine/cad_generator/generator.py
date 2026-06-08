@@ -58,6 +58,11 @@ class CADGenerator:
         import os
         if freecad_appimage_path:
             self.appimage_path = Path(freecad_appimage_path)
+            # When a custom AppImage path is supplied, derive squashfs-root relative to it
+            # so that the missing-binary check reflects the override (important for tests).
+            custom_root = self.appimage_path.parent / "squashfs-root"
+            self.SQUASHFS_ROOT = custom_root
+            self.FREECADCMD = custom_root / "usr/bin/freecadcmd"
         else:
             self.appimage_path = Path(
                 os.environ.get(
