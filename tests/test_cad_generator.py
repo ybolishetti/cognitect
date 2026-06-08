@@ -29,8 +29,8 @@ class TestCADGeneratorImport:
         assert err.exit_code == 1
 
 
-class TestCADGeneratorStub:
-    def test_generate_raises_not_implemented(self):
+class TestCADGenerator:
+    def test_generate_raises_when_freecad_missing(self):
         gen = CADGenerator(freecad_appimage_path="/tmp/nonexistent.AppImage")
         state = FloorPlanState(
             plan_id="test",
@@ -46,9 +46,9 @@ class TestCADGeneratorStub:
         coordinate_matrix = {
             "living_room": {"x": 0.0, "y": 0.0, "width": 20.0, "height": 15.0}
         }
-        with pytest.raises(NotImplementedError) as exc_info:
+        with pytest.raises(CADGenerationError) as exc_info:
             gen.generate(coordinate_matrix, state)
-        assert "DRAFT_CAD_GENERATOR.md" in str(exc_info.value)
+        assert "FreeCAD binary not found" in str(exc_info.value)
 
     def test_cad_generator_accepts_appimage_path_override(self):
         """CADGenerator should accept a custom AppImage path."""

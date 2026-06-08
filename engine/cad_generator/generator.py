@@ -58,6 +58,11 @@ class CADGenerator:
         import os
         if freecad_appimage_path:
             self.appimage_path = Path(freecad_appimage_path)
+            # When a custom AppImage path is supplied, derive squashfs-root relative to it
+            # so that the missing-binary check reflects the override (important for tests).
+            custom_root = self.appimage_path.parent / "squashfs-root"
+            self.SQUASHFS_ROOT = custom_root
+            self.FREECADCMD = custom_root / "usr/bin/freecadcmd"
         else:
             self.appimage_path = Path(
                 os.environ.get(
@@ -80,24 +85,110 @@ class CADGenerator:
 
         Raises:
             CADGenerationError: If FreeCAD subprocess fails.
-            NotImplementedError: Until Cursor Composer implements this.
 
         SLA: 5–15s
         """
-        # TODO: Implement via Cursor Composer — see DRAFT_CAD_GENERATOR.md
-        # Implementation outline:
-        # 1. Check self.FREECADCMD exists (squashfs-root extracted)
-        # 2. Write coordinate_matrix to a temp JSON file
-        # 3. env = {**os.environ, "LD_LIBRARY_PATH": self.FREECAD_LIBS}
-        #    subprocess.run(
-        #        [str(self.FREECADCMD), "-c", f"exec(open('{script_path}').read())"],
-        #        env=env, cwd=str(self.SQUASHFS_ROOT),
-        #        input=json_payload, capture_output=True, timeout=30
-        #    )
-        # 4. Parse stdout for "FREECAD_OK: /path/to/file"
-        # 5. Return Path to .FCStd
-        # NOTE: Do NOT use --appimage-extract-and-run — use squashfs-root directly
-        raise NotImplementedError(
-            "CADGenerator.generate() is pending Cursor Composer implementation. "
-            "See DRAFT_CAD_GENERATOR.md for the full spec."
+        import json
+        import os
+        import subprocess
+        import tempfile
+
+        from engine.setup_env import ensure_libgl
+
+        # 1. Ensure libGL is available
+        libgl_dir = ensure_libgl()
+
+        # 2. Verify FreeCAD binary exists
+        if not self.FREECADCMD.exists():
+            raise CADGenerationError(
+                f"FreeCAD binary not found: {self.FREECADCMD}. "
+                "Is the squashfs-root extracted?",
+                exit_code=1,
+            )
+
+        # 3. Write coordinate_matrix + output path to a temp input JSON file
+        output_dir = Path(tempfile.gettempdir()) / "cognitect_output"
+        output_dir.mkdir(exist_ok=True)
+        output_path = output_dir / f"{plan_state.plan_id}.FCStd"
+
+        payload = {
+            "coordinate_matrix": coordinate_matrix,
+            "output_path": str(output_path),
+            "plan_id": plan_state.plan_id,
+            "rooms": {
+                room_id: {
+                    "name": spec.name,
+                    "room_type": spec.room_type,
+                }
+                for room_id, spec in plan_state.rooms.items()
+            },
+        }
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as f:
+            json.dump(payload, f)
+            input_json_path = f.name
+
+        # 4. Build the FreeCAD script invocation command
+        script_path = Path(__file__).parent / "freecad_scripts" / "generate_plan.py"
+
+        env = {
+            **os.environ,
+            "LD_LIBRARY_PATH": f"{libgl_dir}/usr/lib/x86_64-linux-gnu",
+            "QT_QPA_PLATFORM": "offscreen",
+        }
+
+        cmd = [
+            str(self.FREECADCMD),
+            "-c",
+            (
+                f"import json, sys; sys.stdin = open('{input_json_path}'); "
+                f"exec(open('{script_path}').read())"
+            ),
+        ]
+
+        # 5. Run FreeCAD subprocess
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env=env,
+                cwd=str(self.SQUASHFS_ROOT),
+            )
+        except subprocess.TimeoutExpired:
+            raise CADGenerationError(
+                f"FreeCAD subprocess timed out after 30s for plan {plan_state.plan_id}",
+                exit_code=-1,
+            )
+        finally:
+            try:
+                os.unlink(input_json_path)
+            except OSError:
+                pass
+
+        # 6. Check for success sentinel in stdout
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+
+        if result.returncode != 0 or "FREECAD_OK:" not in stdout:
+            raise CADGenerationError(
+                f"FreeCAD subprocess failed for plan {plan_state.plan_id}",
+                stderr=stderr,
+                exit_code=result.returncode,
+            )
+
+        # 7. Parse output path from sentinel line
+        for line in stdout.splitlines():
+            if line.startswith("FREECAD_OK:"):
+                out_path = Path(line.split(":", 1)[1].strip())
+                if out_path.exists():
+                    return out_path
+
+        raise CADGenerationError(
+            f"FreeCAD reported OK but output file not found. stdout: {stdout[:200]}",
+            stderr=stderr,
+            exit_code=0,
         )
