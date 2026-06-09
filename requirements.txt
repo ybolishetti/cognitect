@@ -18,6 +18,7 @@ cadquery>=2.4.0
 # Web framework
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9  # required for FastAPI file uploads (multipart/form-data)
 
 # Task queue
 celery[redis]>=5.3.0
