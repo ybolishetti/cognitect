@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import statistics
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -32,6 +34,14 @@ router = APIRouter(prefix="/plan", tags=["load"])
 # placeholder key so a plan can be loaded in a keyless demo/test environment; the
 # real key is read from the env when an actual instruction is parsed.
 _FALLBACK_KEY = os.environ.get("COGNITECT_CLAUDE_API_KEY") or "demo-placeholder-key"
+
+INSUNITS_TO_FEET = {
+    1: 1 / 12,       # inches
+    2: 1.0,          # feet
+    4: 1 / 304.8,    # mm
+    5: 1 / 30.48,    # cm
+    6: 3.28084,      # meters
+}
 
 
 class LoadResponse(BaseModel):
@@ -101,14 +111,9 @@ async def _load_from_dxf(raw: bytes, filename: str) -> LoadResponse:
     Rooms are named 'Room 1', 'Room 2', etc. and typed as 'other'.
     The user can then rename/retype them via NL instructions.
 
-    Coordinate units: assumed to be feet. If bounding boxes look implausibly
-    large (> 500ft on a side), divide by 12 (inches → feet).
+    Uses $INSUNITS when present, otherwise global heuristics, then filters
+    non-room geometry and normalizes coordinates to the origin in feet.
     """
-    import os
-    import tempfile
-
-    # ezdxf reads from a text stream or a file path; write the uploaded bytes to a
-    # temp file and use readfile() so encoding detection (ASCII/binary DXF) works.
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as tmp:
@@ -123,17 +128,15 @@ async def _load_from_dxf(raw: bytes, filename: str) -> LoadResponse:
 
     msp = doc.modelspace()
 
-    rooms: dict[str, RoomSpec] = {}
-    coordinate_matrix: dict[str, dict] = {}
-    room_index = 1
+    insunits = doc.header.get("$INSUNITS", 0)
+    scale = INSUNITS_TO_FEET.get(insunits)
 
+    candidates = []
     for entity in msp:
-        # Only process closed LWPOLYLINEs (room outlines)
         if entity.dxftype() not in ("LWPOLYLINE", "POLYLINE"):
             continue
         if not getattr(entity.dxf, "closed", False) and not getattr(entity, "is_closed", False):
             continue
-
         try:
             if entity.dxftype() == "LWPOLYLINE":
                 points = list(entity.get_points())
@@ -145,47 +148,97 @@ async def _load_from_dxf(raw: bytes, filename: str) -> LoadResponse:
                 ys = [v.dxf.location.y for v in verts]
         except Exception:
             continue
-
         if len(xs) < 3:
             continue
-
         x_min, x_max = min(xs), max(xs)
         y_min, y_max = min(ys), max(ys)
-        w = x_max - x_min
-        h = y_max - y_min
-
-        # Skip degenerate shapes
-        if w < 0.1 or h < 0.1:
+        w, h = x_max - x_min, y_max - y_min
+        if w < 0.01 or h < 0.01:
             continue
+        candidates.append((x_min, y_min, w, h))
 
-        # Heuristic: if any dimension > 500, assume inches and convert to feet
-        if w > 500 or h > 500:
-            x_min /= 12; x_max /= 12
-            y_min /= 12; y_max /= 12
-            w /= 12; h /= 12
+    if not candidates:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No closed polylines found in DXF. "
+                "Ensure rooms are drawn as closed LWPOLYLINE entities. "
+                "Tip: in AutoCAD, use BOUNDARY command to convert wall lines to closed polylines."
+            ),
+        )
 
-        room_id = f"room_{room_index}"
-        area = round(w * h, 1)
+    if scale is None:
+        max_dim = max(max(c[2], c[3]) for c in candidates)
+        if max_dim > 10_000:
+            scale = 1 / 304.8
+        elif max_dim > 500:
+            scale = 1 / 12
+        else:
+            scale = 1.0
 
+    scaled = [(x * scale, y * scale, w * scale, h * scale) for (x, y, w, h) in candidates]
+
+    min_room_sqft = 20
+    max_room_sqft = 5000
+    filtered = [
+        (x, y, w, h) for (x, y, w, h) in scaled
+        if min_room_sqft <= w * h <= max_room_sqft
+    ]
+
+    if not filtered:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"DXF parsed but no plausible room shapes found after unit conversion "
+                f"(scale={scale:.6f}). All {len(scaled)} shapes were outside the "
+                f"{min_room_sqft}–{max_room_sqft} sqft range. "
+                "Check that the DXF contains closed polylines sized as rooms, not site boundaries."
+            ),
+        )
+
+    if len(filtered) >= 4:
+        cx_list = [x + w / 2 for (x, y, w, h) in filtered]
+        cy_list = [y + h / 2 for (x, y, w, h) in filtered]
+        med_cx = statistics.median(cx_list)
+        med_cy = statistics.median(cy_list)
+        mad_x = statistics.median([abs(cx - med_cx) for cx in cx_list]) or 1
+        mad_y = statistics.median([abs(cy - med_cy) for cy in cy_list]) or 1
+        thresh_x = max(mad_x * 5, 30)
+        thresh_y = max(mad_y * 5, 30)
+        filtered = [
+            (x, y, w, h) for (x, y, w, h) in filtered
+            if abs((x + w / 2) - med_cx) <= thresh_x
+            and abs((y + h / 2) - med_cy) <= thresh_y
+        ]
+
+    if not filtered:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "DXF parsed but all room shapes were spatial outliers after filtering. "
+                "Check that closed polylines represent rooms in a single floor-plan cluster."
+            ),
+        )
+
+    origin_x = min(x for (x, y, w, h) in filtered)
+    origin_y = min(y for (x, y, w, h) in filtered)
+    normalized = [(x - origin_x, y - origin_y, w, h) for (x, y, w, h) in filtered]
+
+    rooms: dict[str, RoomSpec] = {}
+    coordinate_matrix: dict[str, dict] = {}
+    for i, (x, y, w, h) in enumerate(normalized, start=1):
+        room_id = f"room_{i}"
         rooms[room_id] = RoomSpec(
-            name=f"Room {room_index}",
+            name=f"Room {i}",
             room_type="other",
-            area_sqft=area,
+            area_sqft=round(w * h, 1),
         )
         coordinate_matrix[room_id] = {
-            "x": round(x_min, 2),
-            "y": round(y_min, 2),
+            "x": round(x, 2),
+            "y": round(y, 2),
             "width": round(w, 2),
             "height": round(h, 2),
         }
-        room_index += 1
-
-    if not rooms:
-        raise HTTPException(
-            status_code=422,
-            detail="No closed polylines found in DXF. "
-                   "Ensure rooms are drawn as closed LWPOLYLINE entities."
-        )
 
     plan_id = str(uuid.uuid4())[:8]
     state = FloorPlanState(
@@ -197,12 +250,18 @@ async def _load_from_dxf(raw: bytes, filename: str) -> LoadResponse:
     manager._state = state
     _PLANS[plan_id] = manager
 
-    logger.info("Loaded DXF plan '%s' — %d rooms extracted", plan_id, len(rooms))
+    logger.info(
+        "Loaded DXF plan '%s' — %d rooms (scale=%.6f, insunits=%d, raw=%d, filtered=%d)",
+        plan_id, len(rooms), scale, insunits, len(candidates), len(filtered),
+    )
     return LoadResponse(
         plan_id=plan_id,
         room_count=len(rooms),
         format="dxf",
-        message=f"Extracted {len(rooms)} room(s) from DXF. "
-                f"Rooms are named 'Room 1', 'Room 2', etc. "
-                f"Use NL instructions to rename, resize, or rearrange them.",
+        message=(
+            f"Extracted {len(rooms)} room(s) from DXF "
+            f"(unit scale: {scale:.4f} ft/unit). "
+            "Rooms are named 'Room 1', 'Room 2', etc. "
+            "Use NL instructions to rename, resize, or rearrange them."
+        ),
     )
