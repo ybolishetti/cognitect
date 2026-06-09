@@ -46,7 +46,8 @@ class InstructRequest(BaseModel):
 
 class InstructResponse(BaseModel):
     plan_id: str
-    op_type: str
+    ops_applied: int
+    op_types: list[str]
     room_count: int
     version: int
     message: str
@@ -83,7 +84,7 @@ async def instruct(plan_id: str, request: InstructRequest):
     manager = _get_plan(plan_id)
 
     try:
-        op = manager.instruct(request.instruction)
+        ops = manager.instruct(request.instruction)
     except SchemaValidationError as exc:
         raise HTTPException(
             status_code=422,
@@ -96,12 +97,17 @@ async def instruct(plan_id: str, request: InstructRequest):
     except PlanManagerError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    op_types = [op.op_type for op in ops]
     return InstructResponse(
         plan_id=plan_id,
-        op_type=op.op_type,
+        ops_applied=len(ops),
+        op_types=op_types,
         room_count=manager.room_count,
         version=manager.state.version,
-        message=f"Applied '{op.op_type}'. Plan now has {manager.room_count} room(s).",
+        message=(
+            f"Applied {len(ops)} op(s): {', '.join(op_types)}. "
+            f"Plan now has {manager.room_count} room(s)."
+        ),
     )
 
 

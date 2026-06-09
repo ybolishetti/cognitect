@@ -127,6 +127,14 @@ class FloorPlanOp(BaseModel):
         return self
 
 
+class FloorPlanOpBatch(BaseModel):
+    """One or more ops extracted from a single NL instruction."""
+
+    ops: list[FloorPlanOp]
+    batch_description: str
+    metadata: dict = {}
+
+
 class RoomCoordinates(BaseModel):
     """Resolved 2D position and size for a room, in feet. Origin is (0, 0) bottom-left."""
 

@@ -89,15 +89,20 @@ def test_load_dxf_basic():
 def test_load_then_instruct(monkeypatch):
     """Load a JSON plan then send an NL instruction (mocked Claude)."""
     from engine.intent_parser import parser as intent_parser_module
-    from engine.intent_parser.schemas import FloorPlanOp, RoomSpec
+    from engine.intent_parser.schemas import FloorPlanOp, FloorPlanOpBatch, RoomSpec
 
-    def mock_parse(self, nl_input, state):
-        return FloorPlanOp(
-            op_type="add_room",
-            room_spec=RoomSpec(name="Office", room_type="office", area_sqft=120),
+    def mock_parse_batch(self, nl_input, state):
+        return FloorPlanOpBatch(
+            ops=[
+                FloorPlanOp(
+                    op_type="add_room",
+                    room_spec=RoomSpec(name="Office", room_type="office", area_sqft=120),
+                )
+            ],
+            batch_description="Add office",
         )
 
-    monkeypatch.setattr(intent_parser_module.IntentParser, "parse", mock_parse)
+    monkeypatch.setattr(intent_parser_module.IntentParser, "parse_batch", mock_parse_batch)
 
     # First load a plan
     state = {
