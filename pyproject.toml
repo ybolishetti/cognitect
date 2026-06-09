@@ -52,6 +52,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
     "slow: tests that invoke FreeCAD subprocess (~5-15s each)",
+    "live: marks tests requiring real Claude API",
 ]
 
 [tool.ruff]
