@@ -76,28 +76,32 @@ class PlanManager:
     def room_count(self) -> int:
         return len(self._state.rooms)
 
-    def instruct(self, nl_input: str) -> FloorPlanOp:
+    def instruct(self, nl_input: str) -> list[FloorPlanOp]:
         """
-        Parse a natural-language instruction and apply it to the plan.
+        Parse a natural-language instruction and apply ALL resulting ops.
 
         Args:
             nl_input: e.g. "Add a master bedroom of 200 sqft adjacent to the bathroom"
 
         Returns:
-            The FloorPlanOp that was applied.
+            List of FloorPlanOps that were applied (1 or more).
 
         Raises:
             IntentParseError: If Claude fails to parse the instruction.
             PlanManagerError: If the op can't be applied to the current state.
         """
-        op = self._parser.parse(nl_input, self._state)
-        self._apply_op(op)
-        self._history.append(op)
+        batch = self._parser.parse_batch(nl_input, self._state)
+        applied = []
+        for op in batch.ops:
+            self._apply_op(op)
+            self._history.append(op)
+            applied.append(op)
         logger.info(
-            "Applied op: %s | rooms=%d | v=%d",
-            op.op_type, len(self._state.rooms), self._state.version
+            "Applied %d op(s) from batch '%s' | rooms=%d | v=%d",
+            len(applied), batch.batch_description,
+            len(self._state.rooms), self._state.version,
         )
-        return op
+        return applied
 
     def apply_op(self, op: FloorPlanOp) -> None:
         """

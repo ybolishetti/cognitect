@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from engine.plan_manager import PlanManager, PlanManagerError, UnknownRoomError
-from engine.intent_parser.schemas import FloorPlanOp, RoomSpec
+from engine.intent_parser.schemas import FloorPlanOp, FloorPlanOpBatch, RoomSpec
 
 
 # ── Mocked pipeline tests ─────────────────────────────────────────────────────
@@ -27,7 +27,13 @@ class TestNLPipelineMocked:
         """Create a PlanManager whose parser returns ops in sequence."""
         with patch("engine.plan_manager.IntentParser") as MockParser:
             mock_instance = MockParser.return_value
-            mock_instance.parse.side_effect = ops
+            mock_instance.parse_batch.side_effect = [
+                FloorPlanOpBatch(
+                    ops=[op],
+                    batch_description=f"mock batch for {op.op_type}",
+                )
+                for op in ops
+            ]
             manager = PlanManager(api_key="mock-key")
         return manager
 
@@ -100,8 +106,8 @@ class TestNLPipelineMocked:
             )
         ]
         manager = self._make_manager_with_mock_parser(ops)
-        op = manager.instruct("Add a bedroom")
-        assert op.op_type == "add_room"
+        applied = manager.instruct("Add a bedroom")
+        assert applied[0].op_type == "add_room"
 
 
 # ── Live API tests (skipped unless COGNITECT_CLAUDE_API_KEY is set) ───────────
@@ -122,8 +128,8 @@ class TestNLPipelineLive:
         return PlanManager()
 
     def test_live_add_living_room(self, manager):
-        op = manager.instruct("Add a living room of about 300 square feet")
-        assert op.op_type == "add_room"
+        ops = manager.instruct("Add a living room of about 300 square feet")
+        assert ops[0].op_type == "add_room"
         assert manager.room_count == 1
 
     def test_live_two_room_plan_exports(self, manager):

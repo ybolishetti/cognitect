@@ -16,7 +16,7 @@ from typing import Optional
 import anthropic
 from dotenv import load_dotenv
 
-from .schemas import FloorPlanOp, FloorPlanState
+from .schemas import FloorPlanOp, FloorPlanOpBatch, FloorPlanState
 
 load_dotenv()
 
@@ -24,12 +24,7 @@ logger = logging.getLogger(__name__)
 
 # ── Prompt ──────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are the intent extraction engine for Cognitect, an architectural CAD system.
-
-Your job: given a natural-language instruction about a floor plan, extract ONE atomic operation
-and return it as valid JSON matching the FloorPlanOp schema below. Nothing else — no explanation,
-no markdown fences, no commentary. Just the JSON object.
-
+FLOOR_PLAN_OP_SCHEMA = """
 ## FloorPlanOp schema
 
 {
@@ -67,41 +62,72 @@ no markdown fences, no commentary. Just the JSON object.
   "connection_type": one of ["door","archway","wall_opening"],
   "width_ft": float or null
 }
+"""
+
+SYSTEM_PROMPT_BATCH = f"""You are the intent extraction engine for Cognitect, an architectural CAD system.
+
+Your job: given a natural-language instruction about a floor plan, decompose it into ONE OR MORE
+atomic FloorPlanOp operations and return them as a JSON object with an "ops" array.
+
+Return format:
+{{
+  "ops": [ <FloorPlanOp>, <FloorPlanOp>, ... ],
+  "batch_description": "<one sentence describing what was requested>",
+  "metadata": {{ "confidence": 0.0-1.0 }}
+}}
+
+{FLOOR_PLAN_OP_SCHEMA}
 
 ## Rules
 
 1. Return ONLY the JSON object. No markdown, no explanation.
-2. op_type must exactly match what the user asked for:
+2. Decompose complex requests into multiple ops. Examples:
+   - "Add 3 bedrooms" → 3 separate add_room ops (bedroom_1, bedroom_2, bedroom_3)
+   - "Add a master suite" → add_room(master_bedroom, 200sqft) + add_room(master_bathroom, 80sqft, adjacent to master_bedroom)
+   - "Open concept kitchen/living/dining" → 3 add_room ops with adjacency_requirements set on each
+   - "Make the kitchen bigger to fit the dining room" → resize_room(kitchen) + set_constraint(adjacency, kitchen↔dining)
+3. For "X next to Y" / "X adjacent to Y" → encode adjacency_requirements in the RoomSpec of X
+4. For resize requests that affect another room: emit the resize op AND a set_constraint adjacency op
+5. For named architectural bundles, expand them:
+   - "master suite" → master bedroom (200sqft) + en-suite bathroom (80sqft, adjacent)
+   - "open concept" → living (300sqft) + kitchen (200sqft, adjacent) + dining (150sqft, adjacent to both)
+   - "mudroom entry" → hallway/entry (80sqft)
+   - "two-car garage" → garage (440sqft)
+6. Ops must be ordered so dependencies come first: add rooms before connecting them
+7. When resizing a room "to account for" another room, interpret this as: the rooms need adjacency, and
+   the resized room's new area should create a visually proportionate pair (e.g. if dining is 150sqft,
+   kitchen adjacent to it should be ~180-250sqft)
+8. op_type must exactly match what the user asked for:
    - "Add a room" → add_room
    - "Remove / delete a room" → remove_room
    - "Make bigger / resize / change area" → resize_room or set_constraint
    - "Move a room" → move_room
    - "Add a door / connection" → add_connection
    - "Require adjacency / set a rule" → set_constraint
-3. For add_room: always populate room_spec. Leave target_room_id null.
-4. For remove_room / resize_room / move_room: populate target_room_id using an existing room_id
-   from the current state. NEVER invent room IDs that don't exist.
-5. For add_connection: populate connection_spec with both room IDs from existing state.
-6. Room IDs are slugified names: "master_bedroom", "living_room", "kitchen", etc.
-   When adding a new room, derive the ID from the name. When referencing existing rooms,
-   use the exact ID from the provided state.
-7. For ambiguous instructions, choose the most likely interpretation and set
-   metadata.confidence < 0.7.
-8. "adjacency" means sharing a wall; encode it in adjacency_requirements of the RoomSpec
-   OR as a set_constraint with constraint_type="adjacency".
-9. area_sqft is a soft target. Use min_area_sqft / max_area_sqft for hard bounds.
-10. If the user says "about X sqft" → area_sqft=X, strength="medium"
+9. For add_room: always populate room_spec. Leave target_room_id null.
+10. For remove_room / resize_room / move_room: populate target_room_id using an existing room_id
+    from the current state. NEVER invent room IDs that don't exist.
+11. For add_connection: populate connection_spec with both room IDs from existing state.
+12. Room IDs are slugified names: "master_bedroom", "living_room", "kitchen", etc.
+    When adding a new room, derive the ID from the name. When referencing existing rooms,
+    use the exact ID from the provided state.
+13. For ambiguous instructions, choose the most likely interpretation and set
+    metadata.confidence < 0.7.
+14. "adjacency" means sharing a wall; encode it in adjacency_requirements of the RoomSpec
+    OR as a set_constraint with constraint_type="adjacency".
+15. area_sqft is a soft target. Use min_area_sqft / max_area_sqft for hard bounds.
+16. If the user says "about X sqft" → area_sqft=X, strength="medium"
     If the user says "at least X sqft" → min_area_sqft=X, strength="strong"
     If the user says "exactly X sqft" → area_sqft=X, strength="required"
 """
 
-USER_PROMPT_TEMPLATE = """Current floor plan state:
+USER_PROMPT_TEMPLATE_BATCH = """Current floor plan state:
 {state_json}
 
 User instruction:
 {nl_input}
 
-Return the FloorPlanOp JSON:"""
+Decompose this into one or more FloorPlanOps and return the JSON batch:"""
 
 
 # ── Custom exceptions ────────────────────────────────────────────────────────
@@ -161,22 +187,44 @@ class IntentParser:
         """
         Parse a natural-language instruction into a FloorPlanOp.
 
+        Backward-compatible shim: returns only the first op from parse_batch().
+
         Args:
             nl_input: The user's NL instruction, e.g. "Add a master bedroom of 200 sqft"
             plan_state: Current floor plan state (used for room ID resolution)
 
         Returns:
-            Validated FloorPlanOp Pydantic model.
+            Validated FloorPlanOp Pydantic model (first op in the batch).
 
         Raises:
             APIError: If the Claude API call fails.
             SchemaValidationError: If the response doesn't parse into FloorPlanOp.
             SLAViolationError: If the call exceeds 2s (warning-level; still returns result).
         """
+        batch = self.parse_batch(nl_input, plan_state)
+        if not batch.ops:
+            raise SchemaValidationError("Batch contains no ops")
+        return batch.ops[0]
+
+    def parse_batch(self, nl_input: str, plan_state: FloorPlanState) -> FloorPlanOpBatch:
+        """
+        Parse a natural-language instruction into one or more FloorPlanOps.
+
+        Args:
+            nl_input: The user's NL instruction
+            plan_state: Current floor plan state (used for room ID resolution)
+
+        Returns:
+            Validated FloorPlanOpBatch with 1..N ops.
+
+        Raises:
+            APIError: If the Claude API call fails.
+            SchemaValidationError: If the response doesn't parse into FloorPlanOpBatch.
+        """
         t0 = time.perf_counter()
 
         state_summary = self._summarize_state(plan_state)
-        user_message = USER_PROMPT_TEMPLATE.format(
+        user_message = USER_PROMPT_TEMPLATE_BATCH.format(
             state_json=state_summary,
             nl_input=nl_input.strip(),
         )
@@ -185,7 +233,7 @@ class IntentParser:
             response = self._client.messages.create(
                 model=self.MODEL,
                 max_tokens=self.MAX_TOKENS,
-                system=SYSTEM_PROMPT,
+                system=SYSTEM_PROMPT_BATCH,
                 messages=[{"role": "user", "content": user_message}],
             )
         except anthropic.APIStatusError as exc:
@@ -202,11 +250,10 @@ class IntentParser:
         raw_text = response.content[0].text.strip()
         logger.debug("Raw intent response (%.2fs): %s", elapsed, raw_text[:200])
 
-        return self._parse_response(raw_text, nl_input)
+        return self._parse_batch_response(raw_text, nl_input)
 
-    def _parse_response(self, raw_text: str, nl_input: str) -> FloorPlanOp:
+    def _parse_batch_response(self, raw_text: str, nl_input: str) -> FloorPlanOpBatch:
         """Parse and validate the raw text response from Claude."""
-        # Strip markdown code fences if Claude misbehaves
         text = raw_text
         if text.startswith("```"):
             lines = text.splitlines()
@@ -221,33 +268,60 @@ class IntentParser:
                 f"Claude returned non-JSON: {exc}", raw_response=raw_text
             ) from exc
 
-        # Inject raw_nl into metadata if missing
-        if "metadata" not in data or data["metadata"] is None:
-            data["metadata"] = {}
-        data["metadata"].setdefault("raw_nl", nl_input)
+        # Backward compat: Claude returned a single FloorPlanOp (no "ops" array)
+        if "ops" not in data and "op_type" in data:
+            if "metadata" not in data or data["metadata"] is None:
+                data["metadata"] = {}
+            data["metadata"].setdefault("raw_nl", nl_input)
+            try:
+                op = FloorPlanOp.model_validate(data)
+            except Exception as exc:
+                raise SchemaValidationError(
+                    f"Response doesn't match FloorPlanOp schema: {exc}",
+                    raw_response=raw_text,
+                ) from exc
+            return FloorPlanOpBatch(
+                ops=[op],
+                batch_description=op.metadata.get("raw_nl", nl_input),
+                metadata={"confidence": op.metadata.get("confidence", 0.0)},
+            )
+
+        # Inject raw_nl into each op's metadata if missing
+        for op_data in data.get("ops", []):
+            if "metadata" not in op_data or op_data["metadata"] is None:
+                op_data["metadata"] = {}
+            op_data["metadata"].setdefault("raw_nl", nl_input)
 
         try:
-            op = FloorPlanOp.model_validate(data)
+            batch = FloorPlanOpBatch.model_validate(data)
         except Exception as exc:
             raise SchemaValidationError(
-                f"Response doesn't match FloorPlanOp schema: {exc}",
+                f"Response doesn't match FloorPlanOpBatch schema: {exc}",
                 raw_response=raw_text,
             ) from exc
 
-        return op
+        if not batch.ops:
+            raise SchemaValidationError(
+                "Batch must contain at least one op", raw_response=raw_text
+            )
+
+        return batch
 
     def _summarize_state(self, plan_state: FloorPlanState) -> str:
-        """
-        Produce a compact JSON summary of the current plan state for the prompt.
-        Only includes room IDs, types, and areas — not full coordinate matrices.
-        """
+        """Produce a JSON summary of the current plan state for the prompt."""
+        total_area = sum(
+            spec.area_sqft or 0 for spec in plan_state.rooms.values()
+        )
         summary = {
             "plan_id": plan_state.plan_id,
+            "total_area_sqft": round(total_area, 1),
+            "room_count": len(plan_state.rooms),
             "rooms": {
                 room_id: {
                     "name": spec.name,
                     "type": spec.room_type,
                     "area_sqft": spec.area_sqft,
+                    "adjacency_requirements": spec.adjacency_requirements or [],
                 }
                 for room_id, spec in plan_state.rooms.items()
             },
@@ -258,6 +332,15 @@ class IntentParser:
                     "type": conn.connection_type,
                 }
                 for conn in plan_state.connections
+            ],
+            "constraints": [
+                {
+                    "type": c.constraint_type,
+                    "room": c.room_id,
+                    "value": c.value,
+                    "strength": c.strength,
+                }
+                for c in plan_state.constraints
             ],
         }
         return json.dumps(summary, indent=2)
