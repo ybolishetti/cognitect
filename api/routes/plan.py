@@ -106,22 +106,34 @@ async def instruct(plan_id: str, request: InstructRequest):
 
 
 @router.get("/{plan_id}/export")
-async def export_plan(plan_id: str, mode: str = "2d"):
+async def export_plan(plan_id: str, mode: str = "2d", format: str = "dxf"):
     """
     Export the current plan.
 
     Query params:
       mode=2d (default) — fast DXF from coordinate matrix (no FreeCAD)
       mode=3d           — full FreeCAD 3D model then DXF (5–15s)
+      format=dxf        — DXF file (default)
+      format=pdf        — PDF via matplotlib rendering
 
-    Returns the DXF file as a download.
+    Returns the requested file as a download.
     """
     manager = _get_plan(plan_id)
 
     if manager.room_count == 0:
         raise HTTPException(status_code=400, detail="Plan has no rooms. Add rooms first.")
 
+    fmt = format.lower()
+    if fmt not in ("dxf", "pdf"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported format '{format}'. Supported: dxf, pdf",
+        )
+
     try:
+        if fmt == "pdf":
+            return _export_pdf(manager, plan_id)
+
         if mode == "3d":
             dxf_path = manager.export_dxf_with_3d()
         else:
@@ -172,6 +184,47 @@ async def get_state(plan_id: str):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _export_pdf(manager: PlanManager, plan_id: str) -> FileResponse:
+    """
+    Render the current plan to a PDF and return it as a download.
+
+    Uses PlanPreviewer (matplotlib) to render the resolved coordinate matrix to a
+    vector PDF — this matches the on-screen canvas and avoids the ezdxf drawing
+    add-on, which mis-handles annotated TEXT entities on some versions.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from engine.previewer import PlanPreviewer
+
+    matrix = manager.state.coordinate_matrix or {}
+    if not matrix:
+        matrix = manager.solve()
+
+    room_metadata = {
+        room_id: {"name": spec.name, "room_type": spec.room_type}
+        for room_id, spec in manager.state.rooms.items()
+    }
+
+    pdf_bytes = PlanPreviewer().render(
+        coordinate_matrix=matrix,
+        room_metadata=room_metadata,
+        title=f"Cognitect Plan {plan_id}",
+        fmt="pdf",
+    )
+
+    output_dir = Path(tempfile.gettempdir()) / "cognitect_output"
+    output_dir.mkdir(exist_ok=True)
+    pdf_path = output_dir / f"{plan_id}.pdf"
+    pdf_path.write_bytes(pdf_bytes)
+
+    return FileResponse(
+        path=str(pdf_path),
+        media_type="application/pdf",
+        filename=f"{plan_id}.pdf",
+    )
+
 
 def _get_plan(plan_id: str) -> PlanManager:
     manager = _PLANS.get(plan_id)

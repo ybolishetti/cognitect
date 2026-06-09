@@ -21,6 +21,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .routes.plans import router as plans_router
 from api.routes.plan import router as plan_router
+from api.routes.preview import router as preview_router
+from api.routes.load import router as load_router
 
 load_dotenv()
 
@@ -58,6 +60,8 @@ app.add_middleware(
 
 app.include_router(plans_router, prefix="/plans", tags=["plans"])
 app.include_router(plan_router)
+app.include_router(preview_router)
+app.include_router(load_router)
 
 
 @app.get("/health", tags=["meta"])
