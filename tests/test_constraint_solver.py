@@ -21,6 +21,7 @@ import pytest
 from engine.constraint_solver.solver import ConstraintSolver, ConstraintUnsatisfiableError
 from engine.intent_parser.schemas import (
     ConstraintSpec,
+    ConnectionSpec,
     FloorPlanState,
     RoomSpec,
 )
@@ -297,3 +298,143 @@ class TestCoordinateMatrixFormat:
         for rid, coords in matrix.items():
             for key, val in coords.items():
                 assert isinstance(val, float), f"{rid}.{key} is not float: {type(val)}"
+
+
+# ── Layout continuity tests ───────────────────────────────────────────────────
+
+class TestLayoutContinuity:
+    def test_fresh_solve_produces_2d_layout(self):
+        """Initial solve with 5 large rooms should use multiple shelf rows."""
+        solver = ConstraintSolver()
+        state = FloorPlanState(
+            plan_id="test_2d",
+            rooms={
+                f"room_{i}": make_room(f"Room {i}", area_sqft=1300.0)
+                for i in range(5)
+            },
+        )
+        matrix = solver.solve(state)
+        y_values = {coords["y"] for coords in matrix.values()}
+        assert len(y_values) >= 2
+
+    def test_resize_preserves_other_room_positions(self):
+        solver = ConstraintSolver()
+        state = FloorPlanState(
+            plan_id="test_resize_preserve",
+            rooms={
+                "room_a": make_room("Room A", area_sqft=300.0),
+                "room_b": make_room("Room B", area_sqft=200.0),
+                "room_c": make_room("Room C", area_sqft=150.0),
+            },
+        )
+        prior = solver.solve(state)
+
+        state = state.model_copy(update={
+            "rooms": {
+                **state.rooms,
+                "room_a": make_room("Room A", area_sqft=375.0),
+            },
+        })
+        matrix = solver.solve(state, prior_matrix=prior, mutated_rooms={"room_a"})
+
+        for rid in ("room_b", "room_c"):
+            assert matrix[rid]["x"] == pytest.approx(prior[rid]["x"], abs=1.0)
+            assert matrix[rid]["y"] == pytest.approx(prior[rid]["y"], abs=1.0)
+
+    def test_add_room_places_near_adjacency_neighbor(self):
+        solver = ConstraintSolver()
+        state = FloorPlanState(
+            plan_id="test_add_adj",
+            rooms={
+                "living_room": make_room("Living Room", "living", area_sqft=300.0),
+            },
+        )
+        prior = solver.solve(state)
+
+        state = FloorPlanState(
+            plan_id="test_add_adj",
+            rooms={
+                "living_room": make_room("Living Room", "living", area_sqft=300.0),
+                "kitchen": make_room(
+                    "Kitchen", "kitchen", area_sqft=150.0,
+                    adjacency=["Living Room"],
+                ),
+            },
+            connections=[
+                ConnectionSpec(
+                    room_a_id="living_room",
+                    room_b_id="kitchen",
+                    connection_type="door",
+                ),
+            ],
+        )
+        matrix = solver.solve(state, prior_matrix=prior, mutated_rooms={"kitchen"})
+        lr = matrix["living_room"]
+        kt = matrix["kitchen"]
+
+        shares_vertical_wall = (
+            abs((lr["x"] + lr["width"]) - kt["x"]) <= 3.0
+            or abs((kt["x"] + kt["width"]) - lr["x"]) <= 3.0
+        )
+        shares_horizontal_wall = (
+            abs((lr["y"] + lr["height"]) - kt["y"]) <= 3.0
+            or abs((kt["y"] + kt["height"]) - lr["y"]) <= 3.0
+        )
+        assert shares_vertical_wall or shares_horizontal_wall
+
+    def test_remove_room_leaves_others_stable(self):
+        solver = ConstraintSolver()
+        state = FloorPlanState(
+            plan_id="test_remove",
+            rooms={
+                "room_a": make_room("Room A", area_sqft=300.0),
+                "room_b": make_room("Room B", area_sqft=200.0),
+                "room_c": make_room("Room C", area_sqft=150.0),
+            },
+        )
+        prior = solver.solve(state)
+
+        state = FloorPlanState(
+            plan_id="test_remove",
+            rooms={
+                "room_b": make_room("Room B", area_sqft=200.0),
+                "room_c": make_room("Room C", area_sqft=150.0),
+            },
+        )
+        matrix = solver.solve(state, prior_matrix=prior, mutated_rooms={"room_a"})
+
+        for rid in ("room_b", "room_c"):
+            assert matrix[rid]["x"] == pytest.approx(prior[rid]["x"], abs=1.0)
+            assert matrix[rid]["y"] == pytest.approx(prior[rid]["y"], abs=1.0)
+
+    def test_resize_neighbor_collision_pushes_neighbor(self):
+        solver = ConstraintSolver()
+        state = FloorPlanState(
+            plan_id="test_collision",
+            rooms={
+                "living_room": make_room("Living Room", "living", area_sqft=300.0),
+                "kitchen": make_room("Kitchen", "kitchen", area_sqft=150.0),
+            },
+            connections=[
+                ConnectionSpec(
+                    room_a_id="living_room",
+                    room_b_id="kitchen",
+                    connection_type="door",
+                ),
+            ],
+        )
+        prior = solver.solve(state)
+        original_lr_area = prior["living_room"]["width"] * prior["living_room"]["height"]
+        original_kitchen_x = prior["kitchen"]["x"]
+
+        state = state.model_copy(update={
+            "rooms": {
+                **state.rooms,
+                "living_room": make_room("Living Room", "living", area_sqft=600.0),
+            },
+        })
+        matrix = solver.solve(state, prior_matrix=prior, mutated_rooms={"living_room"})
+
+        new_lr_area = matrix["living_room"]["width"] * matrix["living_room"]["height"]
+        assert new_lr_area >= original_lr_area * 1.8
+        assert matrix["kitchen"]["x"] >= original_kitchen_x - 1.0

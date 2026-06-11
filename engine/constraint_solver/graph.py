@@ -28,6 +28,11 @@ class RoomNode:
     # Adjacency edges (room_ids this room must share a wall with)
     adjacency: list[str] = field(default_factory=list)
 
+    # Position lock from prior coordinate_matrix (feet). Width/height remain free.
+    pinned_position: tuple[float, float] | None = None
+    # When True, pinned x/y use "strong" instead of "required" (neighbor of mutated room).
+    is_flexible_pin: bool = False
+
 
 @dataclass
 class WallEdge:

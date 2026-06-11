@@ -35,6 +35,14 @@ def make_remove_room_op(room_id: str) -> FloorPlanOp:
     return FloorPlanOp(op_type="remove_room", target_room_id=room_id)
 
 
+def make_resize_room_op(room_id: str, area: float) -> FloorPlanOp:
+    return FloorPlanOp(
+        op_type="resize_room",
+        target_room_id=room_id,
+        room_spec=RoomSpec(name="unused", room_type="other", area_sqft=area),
+    )
+
+
 def make_connection_op(room_a: str, room_b: str) -> FloorPlanOp:
     return FloorPlanOp(
         op_type="add_connection",
@@ -84,14 +92,14 @@ class TestAddRoom:
         m.apply_op(make_add_room_op("Kitchen", "kitchen", 150.0))
         assert m.state.version == 2
 
-    def test_coordinate_matrix_invalidated_on_add(self):
-        """Adding a room should clear any cached coordinate matrix."""
+    def test_coordinate_matrix_persisted_on_op(self):
+        """Adding a room should keep the cached coordinate matrix until next solve."""
         m = make_manager()
         m.apply_op(make_add_room_op("Living Room", "living", 300.0))
-        _ = m.solve()
+        matrix_before = m.solve()
         assert m.state.coordinate_matrix is not None
         m.apply_op(make_add_room_op("Kitchen", "kitchen", 150.0))
-        assert m.state.coordinate_matrix is None
+        assert m.state.coordinate_matrix == matrix_before
 
 
 # ── Tests: remove_room ────────────────────────────────────────────────────────
@@ -255,3 +263,38 @@ class TestResetAndHistory:
         m.apply_op(make_add_room_op("Living Room", "living", 300.0))
         m.reset()
         assert len(m.history()) == 0
+
+
+# ── Tests: layout continuity ──────────────────────────────────────────────────
+
+class TestPlanManagerContinuity:
+    def test_coordinate_matrix_not_cleared_on_op(self):
+        m = make_manager()
+        m.apply_op(make_add_room_op("Living Room", "living", 300.0))
+        first_matrix = m.solve()
+        m.apply_op(make_add_room_op("Kitchen", "kitchen", 150.0))
+        assert m.state.coordinate_matrix is not None
+        assert m.state.coordinate_matrix == first_matrix
+
+    def test_mutated_rooms_accumulate_across_ops(self):
+        m = make_manager()
+        m.apply_op(make_add_room_op("Living Room", "living", 300.0))
+        m.apply_op(make_add_room_op("Kitchen", "kitchen", 150.0))
+        m.apply_op(make_resize_room_op("living_room", 375.0))
+        m.apply_op(make_resize_room_op("kitchen", 180.0))
+        assert m._last_mutated_rooms == {"living_room", "kitchen"}
+
+    def test_resize_then_solve_preserves_other_rooms(self):
+        m = make_manager()
+        m.apply_op(make_add_room_op("Living Room", "living", 300.0))
+        m.apply_op(make_add_room_op("Kitchen", "kitchen", 150.0))
+        m.apply_op(make_add_room_op("Bedroom", "bedroom", 200.0))
+        m.apply_op(make_add_room_op("Office", "office", 120.0))
+        prior = m.solve()
+
+        m.apply_op(make_resize_room_op("living_room", 375.0))
+        after = m.solve()
+
+        for rid in ("kitchen", "bedroom", "office"):
+            assert after[rid]["x"] == pytest.approx(prior[rid]["x"], abs=1.0)
+            assert after[rid]["y"] == pytest.approx(prior[rid]["y"], abs=1.0)
