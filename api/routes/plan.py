@@ -50,6 +50,7 @@ class InstructResponse(BaseModel):
     op_types: list[str]
     room_count: int
     version: int
+    coordinate_matrix: dict  # room_id → {x, y, width, height}
     message: str
 
 
@@ -98,12 +99,25 @@ async def instruct(plan_id: str, request: InstructRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
     op_types = [op.op_type for op in ops]
+
+    # Solve immediately so the caller gets an up-to-date coordinate matrix.
+    # This is what drives the canvas update — without it, the plan state changes
+    # but the frontend never sees new coordinates.
+    try:
+        matrix = manager.solve()
+    except ConstraintUnsatisfiableError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Constraint solver failed after applying op(s): {exc}",
+        )
+
     return InstructResponse(
         plan_id=plan_id,
         ops_applied=len(ops),
         op_types=op_types,
         room_count=manager.room_count,
         version=manager.state.version,
+        coordinate_matrix=matrix,
         message=(
             f"Applied {len(ops)} op(s): {', '.join(op_types)}. "
             f"Plan now has {manager.room_count} room(s)."
