@@ -14,18 +14,35 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class RoomSpec(BaseModel):
-    """Specification for a single room. Area constraints are soft by default."""
+    """Specification for a single room. Area constraints are soft by default.
 
-    name: str = Field(..., description="Human-readable room name, e.g. 'Master Bedroom'")
-    room_type: Literal[
+    For add_room: name and room_type are required.
+    For resize_room / merge ops: name and room_type may be omitted — only the
+    fields being changed need to be populated.
+    """
+
+    name: Optional[str] = Field(
+        None, description="Human-readable room name, e.g. 'Master Bedroom'. Required for add_room."
+    )
+    room_type: Optional[Literal[
         "bedroom", "bathroom", "kitchen", "living", "dining",
         "hallway", "office", "garage", "other"
-    ]
+    ]] = Field(None, description="Room type. Required for add_room.")
     area_sqft: Optional[float] = Field(
         None, gt=0, description="Target area in square feet (soft constraint)"
     )
     min_area_sqft: Optional[float] = Field(None, gt=0)
     max_area_sqft: Optional[float] = Field(None, gt=0)
+    scale_factor: Optional[float] = Field(
+        None,
+        gt=0,
+        description=(
+            "Multiplicative scale factor for relative resize. "
+            "1.25 = expand by 25%, 0.8 = shrink by 20%. "
+            "Applied to the current room area at apply time. "
+            "Use instead of area_sqft for percentage-based resize commands."
+        ),
+    )
     aspect_ratio: Optional[float] = Field(
         None, gt=0, description="width / height ratio; None means unconstrained"
     )
@@ -118,6 +135,11 @@ class FloorPlanOp(BaseModel):
     def validate_op_fields(self) -> "FloorPlanOp":
         if self.op_type == "add_room" and self.room_spec is None:
             raise ValueError("add_room requires room_spec")
+        if self.op_type == "add_room" and self.room_spec is not None:
+            if not self.room_spec.name:
+                raise ValueError("add_room requires room_spec.name")
+            if not self.room_spec.room_type:
+                raise ValueError("add_room requires room_spec.room_type")
         if self.op_type in ("remove_room", "resize_room", "move_room") and not self.target_room_id:
             raise ValueError(f"{self.op_type} requires target_room_id")
         if self.op_type == "set_constraint" and self.constraint_spec is None:
