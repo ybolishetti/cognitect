@@ -12,6 +12,16 @@ from api.routes.load import _load_from_dxf
 from api.routes.plan import _PLANS
 
 
+def _save_dxf(doc: ezdxf.document.Drawing) -> bytes:
+    with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as tmp:
+        tmp_path = tmp.name
+    doc.saveas(tmp_path)
+    with open(tmp_path, "rb") as fh:
+        data = fh.read()
+    os.unlink(tmp_path)
+    return data
+
+
 def _build_dxf_bytes(
     polylines: list[tuple[list[tuple[float, float]], bool]],
     *,
@@ -23,13 +33,47 @@ def _build_dxf_bytes(
     msp = doc.modelspace()
     for points, closed in polylines:
         msp.add_lwpolyline(points, close=closed)
-    with tempfile.NamedTemporaryFile(suffix=".dxf", delete=False) as tmp:
-        tmp_path = tmp.name
-    doc.saveas(tmp_path)
-    with open(tmp_path, "rb") as fh:
-        data = fh.read()
-    os.unlink(tmp_path)
-    return data
+    return _save_dxf(doc)
+
+
+def _add_rect_lines(msp, x0: float, y0: float, w: float, h: float) -> None:
+    corners = [(x0, y0), (x0 + w, y0), (x0 + w, y0 + h), (x0, y0 + h)]
+    for i in range(4):
+        start = corners[i]
+        end = corners[(i + 1) % 4]
+        msp.add_line(start, end)
+
+
+def _build_line_dxf_bytes(
+    rooms: list[tuple[float, float, float, float]],
+    *,
+    insunits: int = 2,
+) -> bytes:
+    """Create DXF bytes from rectangular rooms drawn as LINE wall segments."""
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = insunits
+    msp = doc.modelspace()
+    for x0, y0, w, h in rooms:
+        _add_rect_lines(msp, x0, y0, w, h)
+    return _save_dxf(doc)
+
+
+def _build_hatch_dxf_bytes(
+    rooms: list[tuple[float, float, float, float]],
+    *,
+    insunits: int = 2,
+) -> bytes:
+    """Create DXF bytes from rectangular rooms drawn as HATCH fills."""
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = insunits
+    msp = doc.modelspace()
+    for x0, y0, w, h in rooms:
+        hatch = msp.add_hatch(color=1)
+        hatch.paths.add_polyline_path(
+            [(x0, y0), (x0 + w, y0), (x0 + w, y0 + h), (x0, y0 + h)],
+            is_closed=True,
+        )
+    return _save_dxf(doc)
 
 
 async def _load(raw: bytes):
@@ -113,19 +157,20 @@ async def test_dxf_non_room_shapes_filtered():
 
 @pytest.mark.asyncio
 async def test_dxf_all_shapes_too_large_raises_422():
-    """Only oversized shapes produce a helpful 422 after area filtering."""
+    """Only oversized shapes produce a helpful 422 after all extraction passes fail."""
     raw = _build_dxf_bytes([([(0, 0), (200, 0), (200, 200), (0, 200)], True)])
     with pytest.raises(HTTPException) as exc_info:
         await _load_from_dxf(raw, "test.dxf")
     assert exc_info.value.status_code == 422
-    assert "no plausible room shapes" in exc_info.value.detail.lower()
-    assert "5000" in exc_info.value.detail
+    assert "no room geometry found" in exc_info.value.detail.lower()
 
 
 @pytest.mark.asyncio
-async def test_dxf_no_closed_polylines_raises_422():
-    """Open polylines only → 422 with BOUNDARY command tip."""
-    raw = _build_dxf_bytes([([(0, 0), (20, 0), (20, 15), (0, 15)], False)])
+async def test_dxf_no_geometry_raises_422():
+    """Empty DXF with no extractable geometry → 422 with remediation tips."""
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 2
+    raw = _save_dxf(doc)
     with pytest.raises(HTTPException) as exc_info:
         await _load_from_dxf(raw, "test.dxf")
     assert exc_info.value.status_code == 422
@@ -146,3 +191,70 @@ async def test_dxf_coordinates_normalized_to_origin():
     ys = [c["y"] for c in state.coordinate_matrix.values()]
     assert min(xs) == pytest.approx(0.0, abs=0.01)
     assert min(ys) == pytest.approx(0.0, abs=0.01)
+
+
+@pytest.mark.asyncio
+async def test_dxf_shared_wall_lines_extract_rooms():
+    """Shared wall segments split at intersections still yield individual rooms."""
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 2
+    msp = doc.modelspace()
+    # Three adjacent rooms using shared horizontal wall lines
+    msp.add_line((0, 0), (66, 0))
+    msp.add_line((0, 15), (66, 15))
+    msp.add_line((0, 0), (0, 15))
+    msp.add_line((22, 0), (22, 15))
+    msp.add_line((44, 0), (44, 15))
+    msp.add_line((66, 0), (66, 15))
+    raw = _save_dxf(doc)
+    resp, _state = await _load(raw)
+    assert resp.room_count == 3
+
+
+@pytest.mark.asyncio
+async def test_dxf_line_wins_over_incidental_polylines():
+    """When incidental polylines survive but LINE walls define more rooms, prefer LINE pass."""
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 2
+    msp = doc.modelspace()
+    for i in range(5):
+        x = 5000 + i * 25
+        msp.add_lwpolyline([(x, 5000), (x + 20, 5000), (x + 20, 5015), (x, 5015)], close=True)
+    for row in range(5):
+        for col in range(7):
+            x0, y0 = col * 22.0, row * 17.0
+            corners = [(x0, y0), (x0 + 20, y0), (x0 + 20, y0 + 15), (x0, y0 + 15)]
+            for i in range(4):
+                msp.add_line(corners[i], corners[(i + 1) % 4])
+    raw = _save_dxf(doc)
+    resp, _state = await _load(raw)
+    assert resp.room_count == 35
+
+
+@pytest.mark.asyncio
+async def test_dxf_line_entities_extract_three_rooms():
+    """LINE wall segments forming three rectangles are reconstructed into rooms."""
+    raw = _build_line_dxf_bytes([
+        (0, 0, 12, 10),
+        (14, 0, 12, 10),
+        (0, 14, 12, 10),
+    ])
+    resp, state = await _load(raw)
+    assert resp.room_count == 3
+    areas = sorted(spec.area_sqft for spec in state.rooms.values())
+    assert areas[0] == pytest.approx(120.0, abs=1.0)
+    assert areas[1] == pytest.approx(120.0, abs=1.0)
+    assert areas[2] == pytest.approx(120.0, abs=1.0)
+
+
+@pytest.mark.asyncio
+async def test_dxf_hatch_entities_fallback_extraction():
+    """HATCH-filled room boundaries are extracted when polyline/LINE passes are insufficient."""
+    raw = _build_hatch_dxf_bytes([
+        (0, 0, 12, 10),
+        (14, 0, 12, 10),
+        (0, 14, 12, 10),
+    ])
+    resp, state = await _load(raw)
+    assert resp.room_count == 3
+    assert all(spec.area_sqft == pytest.approx(120.0, abs=1.0) for spec in state.rooms.values())
