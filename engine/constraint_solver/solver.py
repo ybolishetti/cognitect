@@ -27,6 +27,7 @@ import kiwisolver
 
 from ..intent_parser.schemas import ConstraintSpec, FloorPlanState
 from .graph import CoordinateGraph, RoomNode, WallEdge
+from .layout import RoomLayoutEngine
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +69,19 @@ class ConstraintSolver:
     Returns a coordinate matrix: {room_id: {"x", "y", "width", "height"}} in feet.
     """
 
-    def solve(self, plan_state: FloorPlanState) -> dict[str, dict[str, float]]:
+    def solve(
+        self,
+        plan_state: FloorPlanState,
+        prior_matrix: dict[str, dict[str, float]] | None = None,
+        mutated_rooms: set[str] | None = None,
+    ) -> dict[str, dict[str, float]]:
         """
         Main entry point.
 
         Args:
             plan_state: Current FloorPlanState with rooms and constraints.
+            prior_matrix: Previous coordinate matrix for positional continuity.
+            mutated_rooms: Room IDs touched since last solve (free to reposition).
 
         Returns:
             Coordinate matrix dict: {room_id: {x, y, width, height}}.
@@ -86,7 +94,7 @@ class ConstraintSolver:
         if not plan_state.rooms:
             return {}
 
-        graph = self._build_graph(plan_state)
+        graph = self._build_graph(plan_state, prior_matrix, mutated_rooms)
         matrix = self._solve_with_iterations(graph, plan_state)
 
         elapsed = time.perf_counter() - t0
@@ -99,7 +107,13 @@ class ConstraintSolver:
 
     # ── Graph construction ───────────────────────────────────────────────────
 
-    def _build_graph(self, plan_state: FloorPlanState) -> CoordinateGraph:
+    def _build_graph(
+        self,
+        plan_state: FloorPlanState,
+        prior_matrix: dict[str, dict[str, float]] | None = None,
+        mutated_rooms: set[str] | None = None,
+    ) -> CoordinateGraph:
+        mutated = mutated_rooms or set()
         graph = CoordinateGraph()
 
         for room_id, spec in plan_state.rooms.items():
@@ -136,10 +150,27 @@ class ConstraintSolver:
         # Edges from adjacency_requirements in RoomSpec
         for room_id, spec in plan_state.rooms.items():
             for adj_name in spec.adjacency_requirements:
-                # Find room_id matching the adjacency name
                 adj_id = self._find_room_id_by_name(adj_name, plan_state)
                 if adj_id:
                     graph.add_edge(WallEdge(room_a_id=room_id, room_b_id=adj_id))
+
+        # Position locks from prior matrix
+        if prior_matrix:
+            for room_id, coords in prior_matrix.items():
+                if room_id not in graph.nodes:
+                    continue
+                if room_id in mutated:
+                    continue
+                graph.nodes[room_id].pinned_position = (coords["x"], coords["y"])
+
+            # Downgrade neighbors of mutated rooms from required to strong
+            for room_id in graph.nodes:
+                node = graph.nodes[room_id]
+                if node.pinned_position is None:
+                    continue
+                neighbors = graph.adjacent_rooms(room_id)
+                if any(n in mutated for n in neighbors):
+                    node.is_flexible_pin = True
 
         return graph
 
@@ -301,26 +332,29 @@ class ConstraintSolver:
                 # Soft square-ish preference
                 solver.addConstraint((v["w"] == v["h"]) | "weak")
 
-        # ── Layout: pack rooms left-to-right ────────────────────────────────
+        # ── Layout: 2D placement via RoomLayoutEngine ────────────────────────
 
-        # All rooms on y=0 row, x-packed sequentially
-        # (Simple strip packing; adjacency constrains ordering)
-        ordered_rooms = self._topological_order(room_ids, graph)
+        pinned = {
+            rid: graph.nodes[rid].pinned_position
+            for rid in room_ids
+            if graph.nodes[rid].pinned_position is not None
+        }
+        placement = RoomLayoutEngine().compute_placement(graph, room_ids, pinned=pinned)
 
-        for i, rid in enumerate(ordered_rooms):
+        for rid in room_ids:
             v = vars_[rid]
-            # Anchor first room at origin
-            if i == 0:
-                solver.addConstraint((v["x"] == 0.0) | "strong")
-                solver.addConstraint((v["y"] == 0.0) | "strong")
+            node = graph.nodes[rid]
+            px, py = placement.positions[rid]
+            pin_strength = "strong" if node.is_flexible_pin else "required"
+
+            if node.pinned_position is not None:
+                solver.addConstraint((v["x"] == px) | pin_strength)
+                solver.addConstraint((v["y"] == py) | pin_strength)
             else:
-                prev_rid = ordered_rooms[i - 1]
-                prev_v = vars_[prev_rid]
-                # Current room starts where previous room ends (no gap)
-                solver.addConstraint(
-                    (v["x"] == prev_v["x"] + prev_v["w"]) | "strong"
-                )
-                solver.addConstraint((v["y"] == 0.0) | "strong")
+                solver.addConstraint((v["x"] == px) | "strong")
+                solver.addConstraint((v["y"] == py) | "strong")
+                solver.addConstraint((v["x"] >= 0.0) | "required")
+                solver.addConstraint((v["y"] >= 0.0) | "required")
 
         # ── Solve ────────────────────────────────────────────────────────────
         solver.updateVariables()

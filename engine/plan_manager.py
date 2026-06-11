@@ -64,6 +64,7 @@ class PlanManager:
         self._exporter = PlanExporter()
         self._state = FloorPlanState(plan_id=self.plan_id)
         self._history: list[FloorPlanOp] = []
+        self._last_mutated_rooms: set[str] = set()
 
     # ── Public interface ──────────────────────────────────────────────────────
 
@@ -124,7 +125,14 @@ class PlanManager:
         """
         if not self._state.rooms:
             raise PlanManagerError("Cannot solve: plan has no rooms")
-        matrix = self._solver.solve(self._state)
+        prior_matrix = self._state.coordinate_matrix
+        mutated = self._last_mutated_rooms.copy()
+        self._last_mutated_rooms.clear()
+        matrix = self._solver.solve(
+            self._state,
+            prior_matrix=prior_matrix,
+            mutated_rooms=mutated,
+        )
         self._state = self._state.model_copy(
             update={"coordinate_matrix": matrix}
         )
@@ -221,9 +229,11 @@ class PlanManager:
                 room_id = f"{base}_{i}"
                 i += 1
             rooms[room_id] = op.room_spec
+            self._last_mutated_rooms.add(room_id)
 
         elif op.op_type == "remove_room":
             self._assert_room_exists(op.target_room_id, rooms)
+            self._last_mutated_rooms.add(op.target_room_id)
             rooms.pop(op.target_room_id)
             # Remove any constraints/connections referencing this room
             constraints = [c for c in constraints if c.room_id != op.target_room_id]
@@ -234,6 +244,7 @@ class PlanManager:
 
         elif op.op_type == "resize_room":
             self._assert_room_exists(op.target_room_id, rooms)
+            self._last_mutated_rooms.add(op.target_room_id)
             existing = rooms[op.target_room_id]
             if op.room_spec:
                 # Merge: only update fields that are explicitly set in the new spec
@@ -250,6 +261,7 @@ class PlanManager:
             # determined by constraints, not direct placement.
             # Encode as an adjacency/orientation constraint if metadata hints exist.
             self._assert_room_exists(op.target_room_id, rooms)
+            self._last_mutated_rooms.add(op.target_room_id)
             logger.info(
                 "move_room received for %s — no direct coordinate override; "
                 "use set_constraint with orientation for positioning",
@@ -282,7 +294,6 @@ class PlanManager:
             "constraints": constraints,
             "connections": connections,
             "version": self._state.version + 1,
-            "coordinate_matrix": None,  # invalidate on any mutation
         })
 
     # ── Helpers ───────────────────────────────────────────────────────────────
