@@ -156,21 +156,32 @@ class ConstraintSolver:
 
         # Position locks from prior matrix
         if prior_matrix:
+            # Detect if any mutated rooms are newly added (not in prior_matrix).
+            # When new rooms are being added, we use flexible pins for all existing rooms
+            # so the layout engine can rebalance the whole plan.
+            # When it's a pure edit (resize/move), we use required pins for continuity.
+            has_new_rooms = any(rid not in prior_matrix for rid in mutated)
+
             for room_id, coords in prior_matrix.items():
                 if room_id not in graph.nodes:
                     continue
                 if room_id in mutated:
                     continue
                 graph.nodes[room_id].pinned_position = (coords["x"], coords["y"])
+                if has_new_rooms:
+                    # New room being added — allow existing rooms to shift so the
+                    # layout engine can produce a balanced 2D grid
+                    graph.nodes[room_id].is_flexible_pin = True
 
-            # Downgrade neighbors of mutated rooms from required to strong
-            for room_id in graph.nodes:
-                node = graph.nodes[room_id]
-                if node.pinned_position is None:
-                    continue
-                neighbors = graph.adjacent_rooms(room_id)
-                if any(n in mutated for n in neighbors):
-                    node.is_flexible_pin = True
+            # Also downgrade neighbors of mutated rooms from required to strong
+            if not has_new_rooms:
+                for room_id in graph.nodes:
+                    node = graph.nodes[room_id]
+                    if node.pinned_position is None:
+                        continue
+                    neighbors = graph.adjacent_rooms(room_id)
+                    if any(n in mutated for n in neighbors):
+                        node.is_flexible_pin = True
 
         return graph
 
@@ -334,12 +345,24 @@ class ConstraintSolver:
 
         # ── Layout: 2D placement via RoomLayoutEngine ────────────────────────
 
-        pinned = {
-            rid: graph.nodes[rid].pinned_position
+        # When new rooms are being added (has_new_rooms), skip the prior pinned
+        # positions so the layout engine can produce a balanced 2D grid from scratch.
+        # For pure edits (resize/move), pass pinned positions for continuity.
+        has_new_rooms = any(
+            graph.nodes[rid].is_flexible_pin
             for rid in room_ids
             if graph.nodes[rid].pinned_position is not None
-        }
-        placement = RoomLayoutEngine().compute_placement(graph, room_ids, pinned=pinned)
+        )
+        if has_new_rooms:
+            # Full rebalance: don't pass prior positions to layout engine
+            placement = RoomLayoutEngine().compute_placement(graph, room_ids, pinned={})
+        else:
+            pinned = {
+                rid: graph.nodes[rid].pinned_position
+                for rid in room_ids
+                if graph.nodes[rid].pinned_position is not None
+            }
+            placement = RoomLayoutEngine().compute_placement(graph, room_ids, pinned=pinned)
 
         for rid in room_ids:
             v = vars_[rid]
@@ -356,6 +379,63 @@ class ConstraintSolver:
                 solver.addConstraint((v["x"] >= 0.0) | "required")
                 solver.addConstraint((v["y"] >= 0.0) | "required")
 
+        # ── Non-overlap: post-process to push overlapping rooms down ─────────
+        # The layout engine uses estimated dims but kiwi solves actual dims.
+        # When area targets push a room taller than estimated, it can overlap
+        # the row below. Fix: topologically sort by y, then scan each room
+        # against all rooms above it and push it down if needed.
+
+        # Also add required horizontal non-overlap constraints for rooms the layout
+        # placed on the same row. Without these, kiwi collapses all x positions to 0
+        # when area-target pressure competes with "strong" position suggestions.
+        SHELF_TOLERANCE = 0.5  # ft
+        # Include ALL rooms that are not hard-pinned (pinned_position with is_flexible_pin=False)
+        # — both unpinned rooms and flexible-pinned rooms need horizontal ordering.
+        layout_free = [
+            (rid, placement.positions[rid])
+            for rid in room_ids
+            if graph.nodes[rid].pinned_position is None or graph.nodes[rid].is_flexible_pin
+        ]
+        # Group by row
+        from collections import defaultdict
+        rows: dict[float, list[str]] = defaultdict(list)
+        for rid, (px, py) in layout_free:
+            row_key = round(py / SHELF_TOLERANCE) * SHELF_TOLERANCE
+            rows[row_key].append(rid)
+
+        for row_key, row_rids in rows.items():
+            row_rids_sorted = sorted(row_rids, key=lambda r: placement.positions[r][0])
+            for i in range(len(row_rids_sorted) - 1):
+                r_left = row_rids_sorted[i]
+                r_right = row_rids_sorted[i + 1]
+                vl, vr = vars_[r_left], vars_[r_right]
+                solver.addConstraint((vl["x"] + vl["w"] <= vr["x"]) | "required")
+
+        def _push_down_overlaps(m: dict) -> dict:
+            """Push rooms down (increase y) to eliminate vertical overlaps."""
+            changed = True
+            iters = 0
+            while changed and iters < 20:
+                changed = False
+                iters += 1
+                rids = sorted(m.keys(), key=lambda r: m[r]["y"])
+                for i, r_bot in enumerate(rids):
+                    for r_top in rids[:i]:
+                        c_top = m[r_top]
+                        c_bot = m[r_bot]
+                        # Only push if x ranges overlap (they're in the same column)
+                        x_overlap = not (
+                            c_top["x"] + c_top["width"] <= c_bot["x"]
+                            or c_bot["x"] + c_bot["width"] <= c_top["x"]
+                        )
+                        if not x_overlap:
+                            continue
+                        gap = (c_top["y"] + c_top["height"]) - c_bot["y"]
+                        if gap > 0.001:
+                            m[r_bot] = dict(c_bot, y=round(c_bot["y"] + gap, 3))
+                            changed = True
+            return m
+
         # ── Solve ────────────────────────────────────────────────────────────
         solver.updateVariables()
 
@@ -370,8 +450,10 @@ class ConstraintSolver:
                 "height": round(v["h"].value(), 3),
             }
 
-        return matrix
+        # Post-process: push any residual overlaps down
+        matrix = _push_down_overlaps(matrix)
 
+        return matrix
     def _topological_order(self, room_ids: list[str], graph: CoordinateGraph) -> list[str]:
         """
         Order rooms so adjacent pairs are placed next to each other.

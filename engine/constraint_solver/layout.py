@@ -16,6 +16,10 @@ from .graph import CoordinateGraph, RoomNode
 MIN_ROOM_DIM_FT = 4.0
 MAX_PLAN_DIM_FT = 200.0
 DEFAULT_ASPECT_RATIO = 1.3
+# Target aspect ratio for the overall plan canvas (width / height).
+# Shelf-packing wraps when the row exceeds this width, producing a roughly
+# rectangular layout instead of a single horizontal strip.
+TARGET_CANVAS_ASPECT = 1.6
 
 
 @dataclass
@@ -92,6 +96,22 @@ class RoomLayoutEngine:
             obstacles.append((px, py, w, h))
 
         unpinned = [rid for rid in room_ids if rid not in placed]
+
+        # Derive a target wrap width so the layout forms a roughly rectangular
+        # canvas rather than a single horizontal strip.  Use sqrt(total_area) *
+        # TARGET_CANVAS_ASPECT as the wrap threshold, clamped to MAX_PLAN_DIM_FT.
+        total_area = sum(
+            (graph.nodes[rid].target_area_sqft or 100.0) for rid in unpinned
+        )
+        wrap_width = min(
+            math.sqrt(total_area) * TARGET_CANVAS_ASPECT,
+            MAX_PLAN_DIM_FT,
+        )
+        # Never wrap tighter than the widest single room estimate
+        if unpinned:
+            max_single_w = max(_estimate_dims(graph.nodes[rid])[0] for rid in unpinned)
+            wrap_width = max(wrap_width, max_single_w)
+
         clusters = _build_clusters(graph, unpinned)
 
         shelf_y = 0.0
@@ -120,7 +140,7 @@ class RoomLayoutEngine:
                 w, h = _estimate_dims(node)
 
                 # Wrap to next shelf if this room won't fit horizontally
-                if cursor_x > 0 and cursor_x + w > MAX_PLAN_DIM_FT:
+                if cursor_x > 0 and cursor_x + w > wrap_width:
                     shelf_y += shelf_height if shelf_height > 0 else h
                     cursor_x = 0.0
                     shelf_height = 0.0
@@ -128,7 +148,7 @@ class RoomLayoutEngine:
 
                 x, y = self._place_room(
                     rid, w, h, graph, positions, cluster_placed, obstacles,
-                    cursor_x, shelf_y, shelf_height,
+                    cursor_x, shelf_y, shelf_height, wrap_width,
                 )
 
                 positions[rid] = (x, y)
@@ -151,7 +171,7 @@ class RoomLayoutEngine:
             node = graph.nodes[rid]
             w, h = _estimate_dims(node)
             x, y = cursor_x, shelf_y
-            if x + w > MAX_PLAN_DIM_FT:
+            if x + w > wrap_width:
                 shelf_y += shelf_height if shelf_height > 0 else h
                 x, y = 0.0, shelf_y
                 cursor_x = 0.0
@@ -198,6 +218,7 @@ class RoomLayoutEngine:
         cursor_x: float,
         shelf_y: float,
         shelf_height: float,
+        wrap_width: float = MAX_PLAN_DIM_FT,
     ) -> tuple[float, float]:
         """Place a room adjacent to a placed neighbor when possible, else on shelf."""
         # Try adjacency placement relative to already-placed neighbors (incl. pinned)
@@ -217,7 +238,7 @@ class RoomLayoutEngine:
             for cx, cy in candidates:
                 if cx < 0 or cy < 0:
                     continue
-                if cx + w > MAX_PLAN_DIM_FT or cy + h > MAX_PLAN_DIM_FT:
+                if cx + w > wrap_width or cy + h > MAX_PLAN_DIM_FT:
                     continue
                 if any(_rects_overlap(cx, cy, w, h, ox, oy, ow, oh) for ox, oy, ow, oh in obstacles):
                     continue
@@ -225,7 +246,7 @@ class RoomLayoutEngine:
 
         # Default shelf placement
         x, y = cursor_x, shelf_y
-        if x + w > MAX_PLAN_DIM_FT:
+        if x + w > wrap_width:
             y = shelf_y + (shelf_height if shelf_height > 0 else h)
             x = 0.0
 
@@ -234,7 +255,7 @@ class RoomLayoutEngine:
             if _rects_overlap(x, y, w, h, ox, oy, ow, oh):
                 x = max(x, ox + ow)
 
-        if x + w > MAX_PLAN_DIM_FT:
+        if x + w > wrap_width:
             y = shelf_y + (shelf_height if shelf_height > 0 else h)
             x = 0.0
 

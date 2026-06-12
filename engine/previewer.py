@@ -112,6 +112,8 @@ class PlanPreviewer:
             meta = room_metadata.get(room_id, {})
             room_type = meta.get("room_type", "other")
             name = meta.get("name", room_id.replace("_", " ").title())
+            # Escape underscores so matplotlib doesn't interpret them as LaTeX subscripts
+            name = name.replace("_", " ")
             color = ROOM_COLORS.get(room_type, DEFAULT_COLOR)
 
             # Room rectangle
@@ -141,15 +143,16 @@ class PlanPreviewer:
                     fontsize=max(5, font_size - 2),
                     color="#5D6D7E", zorder=3)
 
-            # Dimension ticks: width along bottom edge
+            # Dimension ticks: width along bottom edge, offset below the room
             tick_color = "#7F8C8D"
             tick_fs = max(5, font_size - 3)
+            arrow_y = y - pad * 0.5  # per-room baseline, not shared
             ax.annotate(
-                "", xy=(x + w, y - pad * 0.4), xytext=(x, y - pad * 0.4),
+                "", xy=(x + w, arrow_y), xytext=(x, arrow_y),
                 arrowprops=dict(arrowstyle="<->", color=tick_color, lw=0.8),
                 zorder=1,
             )
-            ax.text(cx, y - pad * 0.55, f"{w:.0f}'",
+            ax.text(cx, arrow_y - pad * 0.15, f"{w:.0f}'",
                     ha="center", va="top", fontsize=tick_fs, color=tick_color)
 
         if title:
