@@ -41,9 +41,47 @@ The second `any()` is always `True` on any resize with neighbors → `has_new_ro
 
 ## Fix
 
-### In `engine/constraint_solver/solver.py`, method `_run_solver_pass`
+### Approach: Store `requires_full_rebalance` on `ConstraintSolver` during `_build_graph`
 
-Replace the `has_new_rooms` detection block and the subsequent if/else (lines ~365–386):
+`_build_graph` already computes the correct signal (line ~192):
+```python
+has_new_rooms = any(rid not in prior_matrix for rid in mutated)
+```
+...plus `prior_matrix is None` for the very first solve. We stash this on the solver instance so `_run_solver_pass` reads the authoritative value instead of re-deriving it incorrectly from graph node state.
+
+The mutated room is *intentionally* unpinned (`pinned_position=None`), so any check on graph nodes will always see at least one `None` and trigger full rebalance. The only correct source of truth is whether rooms in `mutated` existed in `prior_matrix`.
+
+**No changes to `graph.py`** — `requires_full_rebalance` lives on `ConstraintSolver` as a transient instance attribute, reset each call to `solve()`.
+
+---
+
+### Step 1 — `ConstraintSolver.__init__` (add instance attribute)
+
+Add to `__init__` (or just set it in `solve()` before calling `_build_graph`):
+
+```python
+# In solve(), before _build_graph call — reset the flag each solve
+self._requires_full_rebalance: bool = True  # default True (safe for first solve)
+```
+
+### Step 2 — `_build_graph` — compute and store the flag
+
+At the end of `_build_graph`, after the position-locks block (after line ~213), add:
+
+```python
+# Store the rebalance decision so _run_solver_pass doesn't have to re-derive it.
+# Full rebalance = first solve (no prior_matrix) OR any mutated room is genuinely new.
+if prior_matrix is None:
+    self._requires_full_rebalance = True
+else:
+    self._requires_full_rebalance = any(rid not in prior_matrix for rid in mutated)
+
+return graph
+```
+
+(Move/add the `return graph` if needed — currently it's already there.)
+
+### Step 3 — `_run_solver_pass` — replace the broken `has_new_rooms` block
 
 ```python
 # CURRENT (BROKEN) — replace this entire block:
@@ -58,10 +96,8 @@ has_new_rooms = any(
 )
 
 if has_new_rooms:
-    # Full rebalance with actual solved sizes
     positions = self._tile_rooms(room_ids, sizes, graph, pinned={})
 else:
-    # Preserve pinned positions; tile only the unpinned (mutated) rooms
     pinned_positions = {
         rid: graph.nodes[rid].pinned_position
         for rid in room_ids
@@ -73,23 +109,14 @@ else:
 
 ```python
 # FIXED — replace with this:
-# has_new_rooms is True ONLY when at least one room has no prior position at all.
-# Flexible pins (neighbors of the mutated room) still have a prior position —
-# they are NOT new rooms. They should be passed as soft hints to the tiler.
-has_new_rooms = any(
-    graph.nodes[rid].pinned_position is None
-    for rid in room_ids
-)
-
-if has_new_rooms:
-    # At least one genuinely new room (add_room op) — full rebalance.
+if self._requires_full_rebalance:
+    # First solve, or a genuinely new room was added — full rebalance.
     positions = self._tile_rooms(room_ids, sizes, graph, pinned={})
 else:
-    # Pure edit (resize/move) — preserve all prior positions.
-    # Rigid pins: rooms not touched at all.
-    # Flexible pins: neighbors of the mutated room — include them as starting
-    # positions so the tiler can nudge them if needed, but they won't move
-    # far since the obstacle-avoidance logic keeps them in place.
+    # Pure edit (resize/move) — preserve all rooms that have a prior position.
+    # This includes both rigid pins (untouched rooms) and flexible pins
+    # (neighbors of the mutated room). The mutated room itself has
+    # pinned_position=None and will be placed freely with its new size.
     pinned_positions = {
         rid: graph.nodes[rid].pinned_position
         for rid in room_ids
@@ -99,9 +126,10 @@ else:
 ```
 
 **Key changes:**
-1. `has_new_rooms` check is now a single `any(pinned_position is None)` — no `is_flexible_pin` involvement at all.
-2. The pure-edit `pinned_positions` dict now includes **all** rooms with prior positions (both rigid and flexible pins), so the tiler starts from the real prior layout.
-3. The mutated room (e.g. `room_10`) has `pinned_position=None` so it remains unpinned — the tiler places it freely with its new size.
+1. `has_new_rooms` is replaced entirely by `self._requires_full_rebalance`, computed in `_build_graph` from the authoritative `prior_matrix` + `mutated` sets.
+2. The pure-edit `pinned_positions` dict now includes **all** rooms with prior positions (rigid and flexible), so the tiler starts from the real prior layout.
+3. The mutated room (`room_10`) has `pinned_position=None` → remains unpinned → tiler places it freely with its new size.
+4. `is_flexible_pin` is no longer involved in the rebalance decision at all.
 
 ---
 
