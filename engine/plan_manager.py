@@ -251,12 +251,22 @@ class PlanManager:
 
                 if op.room_spec.scale_factor is not None:
                     current_area = existing.area_sqft or 0.0
+                    # Fallback: derive area from solved coordinate_matrix if area_sqft wasn't set
+                    if current_area <= 0 and self._state.coordinate_matrix:
+                        coords = self._state.coordinate_matrix.get(op.target_room_id)
+                        if coords:
+                            current_area = round(coords["width"] * coords["height"], 2)
+                            logger.info(
+                                "scale_factor: derived base area %.1f sqft for '%s' from coordinate_matrix",
+                                current_area,
+                                op.target_room_id,
+                            )
                     if current_area > 0:
                         new_area = round(current_area * op.room_spec.scale_factor, 2)
                         spec_data["area_sqft"] = new_area
                     else:
                         logger.warning(
-                            "scale_factor on room '%s' skipped: no current area_sqft",
+                            "scale_factor on room '%s' skipped: no current area_sqft and no solved coordinates",
                             op.target_room_id,
                         )
                     spec_data.pop("scale_factor", None)

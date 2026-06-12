@@ -288,16 +288,35 @@ class TestResizeRoomScaleFactor:
         m.apply_op(make_scale_resize_op("room_10", 0.8))
         assert m.state.rooms["room_10"].area_sqft == 160.0
 
-    def test_scale_factor_no_area_is_noop(self, caplog):
+    def test_scale_factor_no_area_no_matrix_is_noop(self, caplog):
+        """If room has no area_sqft AND no coordinate_matrix, scale is skipped."""
         m = make_manager()
         m.apply_op(FloorPlanOp(
             op_type="add_room",
             room_spec=RoomSpec(name="Room 10", room_type="other"),
         ))
+        # No solve() called — coordinate_matrix is None
         with caplog.at_level("WARNING"):
             m.apply_op(make_scale_resize_op("room_10", 1.25))
         assert m.state.rooms["room_10"].area_sqft is None
         assert "scale_factor" in caplog.text
+
+    def test_scale_factor_uses_coordinate_matrix_when_no_area_sqft(self):
+        """If room has no area_sqft but solver has run, derive base area from coordinates."""
+        m = make_manager()
+        m.apply_op(FloorPlanOp(
+            op_type="add_room",
+            room_spec=RoomSpec(name="Room 10", room_type="other"),  # no area_sqft
+        ))
+        m.apply_op(make_add_room_op("Kitchen", "kitchen", 100.0))
+        coords = m.solve()
+        base_w = coords["room_10"]["width"]
+        base_h = coords["room_10"]["height"]
+        base_area = base_w * base_h
+
+        m.apply_op(make_scale_resize_op("room_10", 1.25))
+        expected_area = round(base_area * 1.25, 2)
+        assert m.state.rooms["room_10"].area_sqft == expected_area
 
     def test_scale_factor_preserves_name_and_room_type(self):
         m = make_manager()
