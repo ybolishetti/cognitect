@@ -14,20 +14,24 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class RoomSpec(BaseModel):
-    """Specification for a single room. Area constraints are soft by default.
-
-    For add_room: name and room_type are required.
-    For resize_room / merge ops: name and room_type may be omitted — only the
-    fields being changed need to be populated.
-    """
+    """Specification for a single room. Area constraints are soft by default."""
 
     name: Optional[str] = Field(
-        None, description="Human-readable room name, e.g. 'Master Bedroom'. Required for add_room."
+        None,
+        description=(
+            "Human-readable room name, e.g. 'Master Bedroom'. "
+            "Required for add_room; optional (identity preserved) for resize/move ops."
+        ),
     )
     room_type: Optional[Literal[
         "bedroom", "bathroom", "kitchen", "living", "dining",
         "hallway", "office", "garage", "other"
-    ]] = Field(None, description="Room type. Required for add_room.")
+    ]] = Field(
+        None,
+        description=(
+            "Room type. Required for add_room; optional (identity preserved) for resize/move ops."
+        ),
+    )
     area_sqft: Optional[float] = Field(
         None, gt=0, description="Target area in square feet (soft constraint)"
     )
@@ -39,8 +43,8 @@ class RoomSpec(BaseModel):
         description=(
             "Multiplicative scale factor for relative resize. "
             "1.25 = expand by 25%, 0.8 = shrink by 20%. "
-            "Applied to the current room area at apply time. "
-            "Use instead of area_sqft for percentage-based resize commands."
+            "Applied to the current room area at solve time. "
+            "Mutually exclusive with area_sqft for resize ops."
         ),
     )
     aspect_ratio: Optional[float] = Field(

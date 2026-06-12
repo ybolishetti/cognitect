@@ -43,6 +43,7 @@ FLOOR_PLAN_OP_SCHEMA = """
   "area_sqft": float or null,
   "min_area_sqft": float or null,
   "max_area_sqft": float or null,
+  "scale_factor": float or null,   // relative resize: 1.25 = +25%, 0.8 = -20%
   "aspect_ratio": float or null,
   "adjacency_requirements": [string, ...]
 }
@@ -119,6 +120,14 @@ Return format:
 16. If the user says "about X sqft" → area_sqft=X, strength="medium"
     If the user says "at least X sqft" → min_area_sqft=X, strength="strong"
     If the user says "exactly X sqft" → area_sqft=X, strength="required"
+17. For percentage / relative resize requests, use scale_factor instead of area_sqft:
+    - "Expand X by 25%" → resize_room(target=X, room_spec={{scale_factor: 1.25}})
+    - "Make X 50% larger" → resize_room(target=X, room_spec={{scale_factor: 1.50}})
+    - "Shrink X by 10%" → resize_room(target=X, room_spec={{scale_factor: 0.90}})
+    - "Double the size of X" → resize_room(target=X, room_spec={{scale_factor: 2.0}})
+    - "Reduce X to half" → resize_room(target=X, room_spec={{scale_factor: 0.5}})
+    Do NOT use area_sqft when the user specifies a relative change. Use scale_factor.
+    Do NOT leave room_spec null for resize_room ops — always populate it.
 """
 
 USER_PROMPT_TEMPLATE_BATCH = """Current floor plan state:

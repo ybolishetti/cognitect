@@ -43,6 +43,14 @@ def make_resize_room_op(room_id: str, area: float) -> FloorPlanOp:
     )
 
 
+def make_scale_resize_op(room_id: str, scale_factor: float) -> FloorPlanOp:
+    return FloorPlanOp(
+        op_type="resize_room",
+        target_room_id=room_id,
+        room_spec=RoomSpec(name="unused", room_type="other", scale_factor=scale_factor),
+    )
+
+
 def make_connection_op(room_a: str, room_b: str) -> FloorPlanOp:
     return FloorPlanOp(
         op_type="add_connection",
@@ -263,6 +271,58 @@ class TestResetAndHistory:
         m.apply_op(make_add_room_op("Living Room", "living", 300.0))
         m.reset()
         assert len(m.history()) == 0
+
+
+# ── Tests: resize_room scale_factor ───────────────────────────────────────────
+
+class TestResizeRoomScaleFactor:
+    def test_scale_factor_expands_area(self):
+        m = make_manager()
+        m.apply_op(make_add_room_op("Room 10", "other", 200.0))
+        m.apply_op(make_scale_resize_op("room_10", 1.25))
+        assert m.state.rooms["room_10"].area_sqft == 250.0
+
+    def test_scale_factor_shrinks_area(self):
+        m = make_manager()
+        m.apply_op(make_add_room_op("Room 10", "other", 200.0))
+        m.apply_op(make_scale_resize_op("room_10", 0.8))
+        assert m.state.rooms["room_10"].area_sqft == 160.0
+
+    def test_scale_factor_no_area_is_noop(self, caplog):
+        m = make_manager()
+        m.apply_op(FloorPlanOp(
+            op_type="add_room",
+            room_spec=RoomSpec(name="Room 10", room_type="other"),
+        ))
+        with caplog.at_level("WARNING"):
+            m.apply_op(make_scale_resize_op("room_10", 1.25))
+        assert m.state.rooms["room_10"].area_sqft is None
+        assert "scale_factor" in caplog.text
+
+    def test_scale_factor_preserves_name_and_room_type(self):
+        m = make_manager()
+        m.apply_op(make_add_room_op("Living Room", "living", 200.0))
+        m.apply_op(make_scale_resize_op("living_room", 1.25))
+        assert m.state.rooms["living_room"].name == "Living Room"
+        assert m.state.rooms["living_room"].room_type == "living"
+
+    def test_scale_factor_then_solve_updates_coordinate_matrix(self):
+        m = make_manager()
+        m.apply_op(make_add_room_op("Living Room", "living", 200.0))
+        m.apply_op(make_add_room_op("Kitchen", "kitchen", 150.0))
+        before = m.solve()
+        before_area = (
+            before["living_room"]["width"] * before["living_room"]["height"]
+        )
+
+        m.apply_op(make_scale_resize_op("living_room", 1.25))
+        after = m.solve()
+        after_area = (
+            after["living_room"]["width"] * after["living_room"]["height"]
+        )
+
+        assert after_area > before_area
+        assert m.state.rooms["living_room"].area_sqft == 250.0
 
 
 # ── Tests: layout continuity ──────────────────────────────────────────────────

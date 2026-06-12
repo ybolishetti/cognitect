@@ -249,20 +249,18 @@ class PlanManager:
             if op.room_spec:
                 spec_data = op.room_spec.model_dump(exclude_none=True)
 
-                # Handle relative resize via scale_factor
                 if op.room_spec.scale_factor is not None:
                     current_area = existing.area_sqft or 0.0
                     if current_area > 0:
-                        spec_data["area_sqft"] = round(current_area * op.room_spec.scale_factor, 2)
+                        new_area = round(current_area * op.room_spec.scale_factor, 2)
+                        spec_data["area_sqft"] = new_area
                     else:
                         logger.warning(
-                            "scale_factor resize on room %s skipped: room has no area_sqft",
+                            "scale_factor on room '%s' skipped: no current area_sqft",
                             op.target_room_id,
                         )
-                    # scale_factor is a derived instruction — don't persist it on the room
                     spec_data.pop("scale_factor", None)
 
-                # Merge: only update fields that are explicitly set; preserve identity fields
                 updated = existing.model_copy(update={
                     k: v for k, v in spec_data.items()
                     if k not in ("name", "room_type")
