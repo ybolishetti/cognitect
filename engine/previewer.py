@@ -98,7 +98,7 @@ class PlanPreviewer:
         pad = max(span_x, span_y) * 0.08
 
         ax.set_xlim(min_x - pad, max_x + pad)
-        ax.set_ylim(min_y - pad, max_y + pad)
+        ax.set_ylim(max_y + pad, min_y - pad)  # inverted: y=0 at top, larger y at bottom
         ax.set_aspect("equal")
         ax.set_facecolor("#F8F9FA")
         ax.grid(False)
@@ -146,13 +146,13 @@ class PlanPreviewer:
             # Dimension ticks: width along bottom edge, offset below the room
             tick_color = "#7F8C8D"
             tick_fs = max(5, font_size - 3)
-            arrow_y = y - pad * 0.5  # per-room baseline, not shared
+            arrow_y = y + h + pad * 0.5  # below the room (inverted y-axis: larger y = lower)
             ax.annotate(
                 "", xy=(x + w, arrow_y), xytext=(x, arrow_y),
                 arrowprops=dict(arrowstyle="<->", color=tick_color, lw=0.8),
                 zorder=1,
             )
-            ax.text(cx, arrow_y - pad * 0.15, f"{w:.0f}'",
+            ax.text(cx, arrow_y + pad * 0.15, f"{w:.0f}'",
                     ha="center", va="top", fontsize=tick_fs, color=tick_color)
 
         if title:

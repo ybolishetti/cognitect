@@ -27,7 +27,7 @@ import kiwisolver
 
 from ..intent_parser.schemas import ConstraintSpec, FloorPlanState
 from .graph import CoordinateGraph, RoomNode, WallEdge
-from .layout import RoomLayoutEngine
+from .layout import RoomLayoutEngine, _rects_overlap, TARGET_CANVAS_ASPECT
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,35 @@ class ConstraintUnsatisfiableError(Exception):
     def __init__(self, message: str, iterations: int = 0):
         super().__init__(message)
         self.iterations = iterations
+
+
+def _push_down_overlaps(matrix: dict) -> dict:
+    """Post-process: push rooms down to eliminate vertical overlaps.
+
+    The shelf-packing tiler uses solved sizes, so overlaps shouldn't occur.
+    This is a safety net for floating-point edge cases.
+    """
+    changed = True
+    iters = 0
+    while changed and iters < 20:
+        changed = False
+        iters += 1
+        rids = sorted(matrix.keys(), key=lambda r: matrix[r]["y"])
+        for i, r_bot in enumerate(rids):
+            for r_top in rids[:i]:
+                c_top = matrix[r_top]
+                c_bot = matrix[r_bot]
+                x_overlap = not (
+                    c_top["x"] + c_top["width"] <= c_bot["x"]
+                    or c_bot["x"] + c_bot["width"] <= c_top["x"]
+                )
+                if not x_overlap:
+                    continue
+                gap = (c_top["y"] + c_top["height"]) - c_bot["y"]
+                if gap > 0.01:  # ignore floating-point exact-touch (gap < 0.01)
+                    matrix[r_bot] = dict(c_bot, y=round(c_bot["y"] + gap, 3))
+                    changed = True
+    return matrix
 
 
 # ── Strength mapping ─────────────────────────────────────────────────────────
@@ -260,53 +289,41 @@ class ConstraintSolver:
         scale_factors: dict[str, float],
     ) -> dict[str, dict[str, float]]:
         """
-        One pass of the kiwisolver.
+        Two-phase layout pass:
+          Phase 1 — kiwisolver resolves WIDTH and HEIGHT only (area + aspect constraints).
+          Phase 2 — RoomLayoutEngine tiles rooms using actual solved sizes (no kiwi for x/y).
 
-        Layout strategy: pack rooms left-to-right in a row.
-        Rooms with adjacency edges are placed next to each other.
+        This avoids the fundamental mismatch between kiwi's linear position suggestions
+        and the non-linear non-overlap requirements of a 2D floor plan.
         """
         solver = kiwisolver.Solver()
 
-        # Create variables for each room: x, y, width, height
+        # Create variables for width and height only
         vars_: dict[str, dict[str, kiwisolver.Variable]] = {}
         for rid in room_ids:
             vars_[rid] = {
-                "x": kiwisolver.Variable(f"{rid}_x"),
-                "y": kiwisolver.Variable(f"{rid}_y"),
                 "w": kiwisolver.Variable(f"{rid}_w"),
                 "h": kiwisolver.Variable(f"{rid}_h"),
             }
 
-        # ── Basic constraints ────────────────────────────────────────────────
-
-        for rid in room_ids:
-            node = graph.nodes[rid]
-            v = vars_[rid]
-
-            # Non-negativity
-            solver.addConstraint((v["x"] >= 0.0) | "required")
-            solver.addConstraint((v["y"] >= 0.0) | "required")
-
-            # Minimum dimensions
-            solver.addConstraint((v["w"] >= MIN_ROOM_DIM_FT) | "required")
-            solver.addConstraint((v["h"] >= MIN_ROOM_DIM_FT) | "required")
-
-            # Maximum bounding box
-            solver.addConstraint((v["x"] + v["w"] <= MAX_PLAN_DIM_FT) | "required")
-            solver.addConstraint((v["y"] + v["h"] <= MAX_PLAN_DIM_FT) | "required")
-
-        # ── Area constraints via edit variables ──────────────────────────────
+        # ── Size constraints ──────────────────────────────────────────────────
 
         for rid in room_ids:
             node = graph.nodes[rid]
             v = vars_[rid]
             sf = scale_factors[rid]
 
-            # Determine target dimension from area
+            # Minimum dimensions (required)
+            solver.addConstraint((v["w"] >= MIN_ROOM_DIM_FT) | "required")
+            solver.addConstraint((v["h"] >= MIN_ROOM_DIM_FT) | "required")
+
+            # Maximum dimensions (required)
+            solver.addConstraint((v["w"] <= MAX_PLAN_DIM_FT) | "required")
+            solver.addConstraint((v["h"] <= MAX_PLAN_DIM_FT) | "required")
+
             target_area = node.target_area_sqft
             if target_area:
                 aspect = node.aspect_ratio or 1.0
-                # width = sqrt(target_area * aspect), height = sqrt(target_area / aspect)
                 target_w = math.sqrt(target_area * aspect) * sf
                 target_h = math.sqrt(target_area / aspect) * sf
                 target_w = max(target_w, MIN_ROOM_DIM_FT)
@@ -314,146 +331,148 @@ class ConstraintSolver:
                 solver.addConstraint((v["w"] == target_w) | "strong")
                 solver.addConstraint((v["h"] == target_h) | "strong")
 
-            # Min area constraint (convert to min dimension)
             if node.min_area_sqft:
                 aspect = node.aspect_ratio or 1.0
-                min_w = math.sqrt(node.min_area_sqft * aspect)
-                min_h = math.sqrt(node.min_area_sqft / aspect)
-                solver.addConstraint((v["w"] >= min_w) | "strong")
-                solver.addConstraint((v["h"] >= min_h) | "strong")
+                solver.addConstraint((v["w"] >= math.sqrt(node.min_area_sqft * aspect)) | "strong")
+                solver.addConstraint((v["h"] >= math.sqrt(node.min_area_sqft / aspect)) | "strong")
 
-            # Max area constraint
             if node.max_area_sqft:
                 aspect = node.aspect_ratio or 1.0
-                max_w = math.sqrt(node.max_area_sqft * aspect)
-                max_h = math.sqrt(node.max_area_sqft / aspect)
-                solver.addConstraint((v["w"] <= max_w) | "strong")
-                solver.addConstraint((v["h"] <= max_h) | "strong")
+                solver.addConstraint((v["w"] <= math.sqrt(node.max_area_sqft * aspect)) | "strong")
+                solver.addConstraint((v["h"] <= math.sqrt(node.max_area_sqft / aspect)) | "strong")
 
-            # Aspect ratio (hard if provided, medium otherwise)
             if node.aspect_ratio:
-                # w = aspect_ratio * h  →  w - aspect_ratio * h = 0
-                # kiwisolver doesn't support multiplication of two variables,
-                # so we encode as w == aspect_ratio * h using a constant
-                # This is a linearized approximation updated each iteration.
                 solver.addConstraint(
                     (v["w"] == node.aspect_ratio * v["h"]) | "strong"
                 )
             else:
-                # Soft square-ish preference
                 solver.addConstraint((v["w"] == v["h"]) | "weak")
 
-        # ── Layout: 2D placement via RoomLayoutEngine ────────────────────────
+        solver.updateVariables()
 
-        # When new rooms are being added (has_new_rooms), skip the prior pinned
-        # positions so the layout engine can produce a balanced 2D grid from scratch.
-        # For pure edits (resize/move), pass pinned positions for continuity.
+        # Extract solved sizes
+        sizes: dict[str, tuple[float, float]] = {}
+        for rid in room_ids:
+            v = vars_[rid]
+            w = max(round(v["w"].value(), 3), MIN_ROOM_DIM_FT)
+            h = max(round(v["h"].value(), 3), MIN_ROOM_DIM_FT)
+            sizes[rid] = (w, h)
+
+        # ── Phase 2: tile rooms using a shelf-packing layout with actual sizes ──
+        #
+        # For pure edits (resize/move), respect pinned positions for rooms that
+        # weren't touched. For add-room operations, always do a full rebalance.
         has_new_rooms = any(
+            graph.nodes[rid].pinned_position is None
+            and graph.nodes[rid].is_flexible_pin is False
+            for rid in room_ids
+        ) or any(
             graph.nodes[rid].is_flexible_pin
             for rid in room_ids
             if graph.nodes[rid].pinned_position is not None
         )
+
         if has_new_rooms:
-            # Full rebalance: don't pass prior positions to layout engine
-            placement = RoomLayoutEngine().compute_placement(graph, room_ids, pinned={})
+            # Full rebalance with actual solved sizes
+            positions = self._tile_rooms(room_ids, sizes, graph, pinned={})
         else:
-            pinned = {
+            # Preserve pinned positions; tile only the unpinned (mutated) rooms
+            pinned_positions = {
                 rid: graph.nodes[rid].pinned_position
                 for rid in room_ids
                 if graph.nodes[rid].pinned_position is not None
+                and not graph.nodes[rid].is_flexible_pin
             }
-            placement = RoomLayoutEngine().compute_placement(graph, room_ids, pinned=pinned)
+            positions = self._tile_rooms(room_ids, sizes, graph, pinned=pinned_positions)
 
-        for rid in room_ids:
-            v = vars_[rid]
-            node = graph.nodes[rid]
-            px, py = placement.positions[rid]
-            pin_strength = "strong" if node.is_flexible_pin else "required"
-
-            if node.pinned_position is not None:
-                solver.addConstraint((v["x"] == px) | pin_strength)
-                solver.addConstraint((v["y"] == py) | pin_strength)
-            else:
-                solver.addConstraint((v["x"] == px) | "strong")
-                solver.addConstraint((v["y"] == py) | "strong")
-                solver.addConstraint((v["x"] >= 0.0) | "required")
-                solver.addConstraint((v["y"] >= 0.0) | "required")
-
-        # ── Non-overlap: post-process to push overlapping rooms down ─────────
-        # The layout engine uses estimated dims but kiwi solves actual dims.
-        # When area targets push a room taller than estimated, it can overlap
-        # the row below. Fix: topologically sort by y, then scan each room
-        # against all rooms above it and push it down if needed.
-
-        # Also add required horizontal non-overlap constraints for rooms the layout
-        # placed on the same row. Without these, kiwi collapses all x positions to 0
-        # when area-target pressure competes with "strong" position suggestions.
-        SHELF_TOLERANCE = 0.5  # ft
-        # Include ALL rooms that are not hard-pinned (pinned_position with is_flexible_pin=False)
-        # — both unpinned rooms and flexible-pinned rooms need horizontal ordering.
-        layout_free = [
-            (rid, placement.positions[rid])
-            for rid in room_ids
-            if graph.nodes[rid].pinned_position is None or graph.nodes[rid].is_flexible_pin
-        ]
-        # Group by row
-        from collections import defaultdict
-        rows: dict[float, list[str]] = defaultdict(list)
-        for rid, (px, py) in layout_free:
-            row_key = round(py / SHELF_TOLERANCE) * SHELF_TOLERANCE
-            rows[row_key].append(rid)
-
-        for row_key, row_rids in rows.items():
-            row_rids_sorted = sorted(row_rids, key=lambda r: placement.positions[r][0])
-            for i in range(len(row_rids_sorted) - 1):
-                r_left = row_rids_sorted[i]
-                r_right = row_rids_sorted[i + 1]
-                vl, vr = vars_[r_left], vars_[r_right]
-                solver.addConstraint((vl["x"] + vl["w"] <= vr["x"]) | "required")
-
-        def _push_down_overlaps(m: dict) -> dict:
-            """Push rooms down (increase y) to eliminate vertical overlaps."""
-            changed = True
-            iters = 0
-            while changed and iters < 20:
-                changed = False
-                iters += 1
-                rids = sorted(m.keys(), key=lambda r: m[r]["y"])
-                for i, r_bot in enumerate(rids):
-                    for r_top in rids[:i]:
-                        c_top = m[r_top]
-                        c_bot = m[r_bot]
-                        # Only push if x ranges overlap (they're in the same column)
-                        x_overlap = not (
-                            c_top["x"] + c_top["width"] <= c_bot["x"]
-                            or c_bot["x"] + c_bot["width"] <= c_top["x"]
-                        )
-                        if not x_overlap:
-                            continue
-                        gap = (c_top["y"] + c_top["height"]) - c_bot["y"]
-                        if gap > 0.001:
-                            m[r_bot] = dict(c_bot, y=round(c_bot["y"] + gap, 3))
-                            changed = True
-            return m
-
-        # ── Solve ────────────────────────────────────────────────────────────
-        solver.updateVariables()
-
-        # Extract results
+        # Build matrix
         matrix: dict[str, dict[str, float]] = {}
         for rid in room_ids:
-            v = vars_[rid]
-            matrix[rid] = {
-                "x": round(v["x"].value(), 3),
-                "y": round(v["y"].value(), 3),
-                "width": round(v["w"].value(), 3),
-                "height": round(v["h"].value(), 3),
-            }
+            x, y = positions[rid]
+            w, h = sizes[rid]
+            matrix[rid] = {"x": x, "y": y, "width": w, "height": h}
 
         # Post-process: push any residual overlaps down
         matrix = _push_down_overlaps(matrix)
-
         return matrix
+
+    def _tile_rooms(
+        self,
+        room_ids: list[str],
+        sizes: dict[str, tuple[float, float]],
+        graph: CoordinateGraph,
+        pinned: dict[str, tuple[float, float]],
+    ) -> dict[str, tuple[float, float]]:
+        """
+        Place rooms using shelf-first-fit bin packing with actual solved sizes.
+        Respects pinned positions for unmutated rooms.
+        Returns {room_id: (x, y)}.
+        """
+        import math as _math
+        from collections import defaultdict as _defaultdict
+
+        positions: dict[str, tuple[float, float]] = dict(pinned)
+        placed: set[str] = set(pinned.keys())
+
+        unpinned = [rid for rid in room_ids if rid not in placed]
+        if not unpinned:
+            return positions
+
+        # Derive canvas wrap width from total area of unpinned rooms
+        total_area = sum(sizes[rid][0] * sizes[rid][1] for rid in unpinned)
+        wrap_width = min(_math.sqrt(total_area) * TARGET_CANVAS_ASPECT, MAX_PLAN_DIM_FT)
+        if unpinned:
+            max_w = max(sizes[rid][0] for rid in unpinned)
+            wrap_width = max(wrap_width, max_w)
+
+        # Build a simple obstacle list from pinned rooms
+        obstacles: list[tuple[float, float, float, float]] = []
+        for rid, (px, py) in pinned.items():
+            w, h = sizes[rid]
+            obstacles.append((px, py, w, h))
+
+        shelf_y = 0.0
+        shelf_height = 0.0
+        cursor_x = 0.0
+
+        if obstacles:
+            cursor_x = max(px + w for px, py, w, h in obstacles)
+            shelf_height = max(h for _, _, _, h in obstacles)
+            shelf_y = min(py for _, py, _, _ in obstacles)
+
+        for rid in unpinned:
+            w, h = sizes[rid]
+
+            # Wrap to next shelf if needed
+            if cursor_x > 0 and cursor_x + w > wrap_width:
+                shelf_y += shelf_height if shelf_height > 0 else h
+                cursor_x = 0.0
+                shelf_height = 0.0
+
+            x, y = cursor_x, shelf_y
+
+            # Nudge past any overlapping obstacle
+            changed = True
+            while changed:
+                changed = False
+                for ox, oy, ow, oh in obstacles:
+                    if _rects_overlap(x, y, w, h, ox, oy, ow, oh):
+                        x = max(x, ox + ow)
+                        changed = True
+                if x + w > wrap_width:
+                    shelf_y += shelf_height if shelf_height > 0 else h
+                    x, y = 0.0, shelf_y
+                    shelf_height = 0.0
+
+            positions[rid] = (round(x, 3), round(y, 3))
+            placed.add(rid)
+            obstacles.append((x, y, w, h))
+            cursor_x = x + w
+            shelf_height = max(shelf_height, h)
+
+        return positions
+
+
     def _topological_order(self, room_ids: list[str], graph: CoordinateGraph) -> list[str]:
         """
         Order rooms so adjacent pairs are placed next to each other.
