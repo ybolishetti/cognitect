@@ -28,11 +28,18 @@ redis>=5.0.0
 psycopg2-binary>=2.9.0
 sqlalchemy>=2.0.0
 
+# Persistence (Supabase) + auth
+supabase>=2.0.0
+PyJWT>=2.8.0
+
 # Validation / config
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 
 # Testing
+# httpx pinned <0.28: 0.28 dropped TestClient's `app=` shortcut, which the
+# pinned starlette (via fastapi==0.104.1) still relies on. `supabase` package
+# pulls in latest httpx by default — pin here to avoid the conflict.
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
-httpx>=0.27.0
+httpx>=0.27.0,<0.28

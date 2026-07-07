@@ -16,15 +16,20 @@ import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
+
+load_dotenv()  # must run before importing plans_v2 -> plan_store, which reads
+                # SUPABASE_URL/SUPABASE_SERVICE_KEY at module import time
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .routes.plans import router as plans_router
 from api.routes.plan import router as plan_router
 from api.routes.preview import router as preview_router
 from api.routes.load import router as load_router
-
-load_dotenv()
+from api.routes.plans_v2 import router as plans_v2_router
+from api.storage import plan_store
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -62,12 +67,18 @@ app.include_router(plans_router, prefix="/plans", tags=["plans"])
 app.include_router(plan_router)
 app.include_router(preview_router)
 app.include_router(load_router)
+app.include_router(plans_v2_router)
 
 
 @app.get("/health", tags=["meta"])
-async def health() -> dict:
-    """Liveness probe."""
-    return {"status": "ok", "version": "0.1.0"}
+async def health() -> JSONResponse:
+    """Liveness probe. 503 if Supabase (persistent plan store) is unreachable."""
+    if not plan_store.ping():
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "version": "0.1.0", "supabase": "unreachable"},
+        )
+    return JSONResponse(content={"status": "ok", "version": "0.1.0", "supabase": "ok"})
 
 
 def run() -> None:
