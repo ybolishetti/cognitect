@@ -2,20 +2,23 @@ version: "3.9"
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     ports:
       - "8000:8000"
     environment:
       - COGNITECT_CLAUDE_API_KEY=${COGNITECT_CLAUDE_API_KEY}
-      - DATABASE_URL=postgresql://cognitect:cognitect@postgres:5432/cognitect
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - CORS_ORIGINS=${CORS_ORIGINS}
       - REDIS_URL=redis://redis:6379/0
       - FREECAD_APPIMAGE_PATH=/data/freecad/FreeCAD.AppImage
       - LOG_LEVEL=INFO
     volumes:
       - freecad_data:/data/freecad
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     restart: unless-stopped
@@ -26,20 +29,26 @@ services:
       retries: 3
 
   worker:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     command: celery -A api.tasks.pipeline worker --loglevel=info --concurrency=2
     environment:
       - COGNITECT_CLAUDE_API_KEY=${COGNITECT_CLAUDE_API_KEY}
-      - DATABASE_URL=postgresql://cognitect:cognitect@postgres:5432/cognitect
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
       - REDIS_URL=redis://redis:6379/0
       - FREECAD_APPIMAGE_PATH=/data/freecad/FreeCAD.AppImage
     volumes:
       - freecad_data:/data/freecad
     depends_on:
       - redis
-      - postgres
     restart: unless-stopped
 
+  # Kept for local dev parity / anything not yet migrated off Postgres —
+  # the API and worker talk to Supabase (hosted Postgres) instead, not this
+  # container. Nothing in api/ or engine/ currently connects to DATABASE_URL.
   postgres:
     image: postgres:16-alpine
     environment:
