@@ -79,6 +79,22 @@ export class ApiError extends Error {
   }
 }
 
+// FastAPI's `detail` is a plain string for hand-raised HTTPExceptions (e.g.
+// 401/403/404/429), but a required-but-missing header (e.g. a dropped
+// Authorization header on a require_user route) fails FastAPI's own request
+// validation first and comes back as a 422 with `detail` as an array of
+// {loc, msg, type} objects instead — verified against the live backend.
+export function extractErrorMessage(body: unknown, status: number): string {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => (typeof d === "object" && d && "msg" in d ? String((d as { msg: unknown }).msg) : JSON.stringify(d)))
+      .join("; ");
+  }
+  return `HTTP ${status}`;
+}
+
 export async function apiFetch(path: string, init: RequestInit = {}) {
   const headers = { ...(init.headers || {}), ...(await authHeaders()) };
   const res = await fetch(`${API_URL}${path}`, { ...init, headers });
@@ -87,7 +103,7 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
     const retryAfter = res.headers.get("Retry-After");
     throw new ApiError(
       res.status,
-      body?.detail || `HTTP ${res.status}`,
+      extractErrorMessage(body, res.status),
       retryAfter ? parseInt(retryAfter, 10) : undefined
     );
   }

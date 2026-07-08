@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { ApiError, type PlanListItem, type PlanState } from "@/lib/api";
+import { ApiError, extractErrorMessage, type PlanListItem, type PlanState } from "@/lib/api";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
@@ -26,7 +26,7 @@ async function serverFetch(path: string) {
   const res = await fetch(`${API_URL}${path}`, { headers, cache: "no-store" });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body?.detail || `HTTP ${res.status}`);
+    throw new ApiError(res.status, extractErrorMessage(body, res.status));
   }
   return res.json();
 }
