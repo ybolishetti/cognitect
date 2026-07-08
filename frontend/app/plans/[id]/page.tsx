@@ -13,7 +13,7 @@ export default async function PlanPage({ params }: { params: { id: string } }) {
   }
 
   return (
-    <div className="h-screen">
+    <div className="h-full">
       <PlanEditor planId={params.id} anonymous={false} initialState={plan} />
     </div>
   );

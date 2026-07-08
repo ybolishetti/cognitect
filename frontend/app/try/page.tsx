@@ -52,14 +52,14 @@ function TryPageInner() {
 
   if (!planId) {
     return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-full items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-3 border-b bg-panel px-4 py-2 text-sm">
         <span className="text-muted-foreground">Sign in to save this plan across devices</span>
         <Button size="sm" variant="outline" onClick={() => setAuthOpen(true)}>
