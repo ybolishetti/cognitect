@@ -34,3 +34,8 @@ device-id/rate-limit behavior is only meaningful against the real API.
 - [ ] All 6 routes render without hydration errors (check the browser
       console): `/`, `/try`, `/plans`, `/plans/[id]`, `/account`,
       `/auth/callback`
+- [ ] Auth: Upload a `.dxf` floor plan, redirected to `/plans/<new-id>`,
+      rooms render
+- [ ] Auth: Upload a `.json` FloorPlanState, same
+- [ ] Auth: Upload a `.png`, see a 400 toast
+- [ ] Auth: Upload an 11 MB junk file, see a 413 toast

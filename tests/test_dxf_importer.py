@@ -1,6 +1,14 @@
-"""Unit tests for the robust DXF importer (_load_from_dxf)."""
+"""
+Unit tests for the robust DXF importer.
+
+Covers both the shared engine.importers module (parse_dxf_to_state /
+parse_json_to_state) directly, and the legacy v1 route (_load_from_dxf) that
+wraps it — the latter is the regression proof that extracting the shared
+module didn't change v1 behavior.
+"""
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 
@@ -10,6 +18,7 @@ from fastapi import HTTPException
 
 from api.routes.load import _load_from_dxf
 from api.routes.plan import _PLANS
+from engine.importers import parse_dxf_to_state, parse_json_to_state
 
 
 def _save_dxf(doc: ezdxf.document.Drawing) -> bytes:
@@ -258,3 +267,52 @@ async def test_dxf_hatch_entities_fallback_extraction():
     resp, state = await _load(raw)
     assert resp.room_count == 3
     assert all(spec.area_sqft == pytest.approx(120.0, abs=1.0) for spec in state.rooms.values())
+
+
+# --- engine.importers module (extracted shared parser) ---
+
+
+def test_parse_dxf_to_state_returns_floor_plan_state():
+    """parse_dxf_to_state returns a FloorPlanState directly, with no PlanManager/_PLANS wiring."""
+    raw = _build_dxf_bytes([([(0, 0), (20, 0), (20, 15), (0, 15)], True)])
+    state = parse_dxf_to_state(raw, "test.dxf")
+    assert len(state.rooms) == 1
+    coords = state.coordinate_matrix["room_1"]
+    assert coords["width"] == pytest.approx(20.0, abs=0.1)
+    assert coords["height"] == pytest.approx(15.0, abs=0.1)
+    assert state.plan_id  # a fresh plan_id was generated
+
+
+def test_parse_dxf_to_state_no_geometry_raises_422():
+    """Same error contract as the legacy route for unsupported/empty DXFs."""
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 2
+    raw = _save_dxf(doc)
+    with pytest.raises(HTTPException) as exc_info:
+        parse_dxf_to_state(raw, "test.dxf")
+    assert exc_info.value.status_code == 422
+    assert "BOUNDARY" in exc_info.value.detail
+
+
+def test_parse_json_to_state_roundtrips_floor_plan_state():
+    """parse_json_to_state parses a native FloorPlanState JSON payload."""
+    payload = {
+        "plan_id": "abc123",
+        "rooms": {
+            "room_1": {"name": "Living Room", "room_type": "living", "area_sqft": 200},
+        },
+        "coordinate_matrix": {
+            "room_1": {"x": 0, "y": 0, "width": 20, "height": 10},
+        },
+    }
+    state = parse_json_to_state(json.dumps(payload).encode())
+    assert state.plan_id == "abc123"
+    assert len(state.rooms) == 1
+    assert state.rooms["room_1"].name == "Living Room"
+
+
+def test_parse_json_to_state_invalid_json_raises_422():
+    """Malformed JSON bytes raise the same 422 contract as the legacy route."""
+    with pytest.raises(HTTPException) as exc_info:
+        parse_json_to_state(b"not valid json")
+    assert exc_info.value.status_code == 422

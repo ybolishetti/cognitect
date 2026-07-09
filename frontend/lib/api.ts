@@ -144,6 +144,14 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ device_id: getDeviceId() }),
     }),
+  // Do NOT set Content-Type here — the browser must set the multipart
+  // boundary itself. apiFetch only merges in auth headers, so this is safe.
+  uploadPlan: (file: File, name?: string): Promise<CreatePlanResponse> => {
+    const form = new FormData();
+    form.append("file", file);
+    if (name) form.append("name", name);
+    return apiFetch("/v2/plans/upload", { method: "POST", body: form });
+  },
 };
 
 // ── Preview / export ──

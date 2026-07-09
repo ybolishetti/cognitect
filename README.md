@@ -16,6 +16,9 @@ constraint solver, and exported to DXF/PDF (optionally via FreeCAD for 3D).
 `/v2/plans/*` is the persistent, multi-tenant API (Supabase-backed, JWT auth,
 anonymous-plan support); the original `/plan/*` and `/plans/*` routes remain
 as in-memory, non-persistent endpoints for backward compatibility.
+`POST /v2/plans/upload` seeds a persistent plan from an uploaded `.dxf` or
+`.json` file (multipart, 10 MB max), sharing its DXF/JSON parsing with the
+legacy `/plan/load` route via `engine/importers`.
 
 ## Deployment
 

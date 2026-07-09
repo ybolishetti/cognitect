@@ -7,6 +7,7 @@ compat. Supports anonymous plan creation (X-Device-Id header) and claiming
 anonymous plans after sign-in.
 
 POST   /v2/plans                    — create a new plan
+POST   /v2/plans/upload             — create a plan from an uploaded .dxf/.json file
 GET    /v2/plans                    — list the authenticated user's plans
 POST   /v2/plans/claim              — reassign anonymous plans to the caller
 GET    /v2/plans/{plan_id}          — load plan state
@@ -25,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
@@ -35,6 +36,7 @@ from api.storage.plan_store import PlanAccessDeniedError, PlanNotFoundError
 from engine.cad_generator.generator import CADGenerationError
 from engine.constraint_solver.solver import ConstraintUnsatisfiableError
 from engine.exporter.exporter import ExportError
+from engine.importers import parse_dxf_to_state, parse_json_to_state
 from engine.intent_parser.parser import IntentParseError, IntentParser, SchemaValidationError
 from engine.plan_manager import PlanManagerError, UnknownRoomError
 from engine.previewer import PlanPreviewer
@@ -46,6 +48,7 @@ _previewer = PlanPreviewer()
 
 _ANON_RATE_LIMIT_PER_HOUR = int(os.environ.get("ANON_RATE_LIMIT_PER_HOUR", "1"))
 _USER_RATE_LIMIT_PER_DAY = int(os.environ.get("USER_RATE_LIMIT_PER_DAY", "20"))
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB — DXF/JSON parsing is CPU-bound but bounded by this cap
 
 
 # ── Request / response models ─────────────────────────────────────────────────
@@ -163,6 +166,48 @@ async def create_plan(
     logger.info("Created plan %s", plan_id)
     return CreatePlanResponse(
         plan_id=plan_id, name=body.name, message=f"Plan {plan_id} created."
+    )
+
+
+@router.post("/upload", response_model=CreatePlanResponse, status_code=status.HTTP_201_CREATED)
+async def upload_plan(
+    file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    owner: tuple = Depends(optional_user),
+) -> CreatePlanResponse:
+    user, device_id = owner
+    _require_owner(user, device_id)
+
+    contents = await file.read()
+    if len(contents) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            f"File too large. Max {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+        )
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in (".dxf", ".json"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported format. Upload a .dxf or .json file.")
+
+    state = (
+        parse_dxf_to_state(contents, file.filename or "")
+        if suffix == ".dxf"
+        else parse_json_to_state(contents)
+    )
+
+    plan_name = name or Path(file.filename or "Uploaded plan").stem or "Uploaded plan"
+    plan_id, manager = plan_store.create_plan(
+        user_id=user.id if user else None, device_id=device_id, name=plan_name
+    )
+    # The parsed state carries its own (or a freshly generated) plan_id, but the
+    # Supabase row was created under plan_store's plan_id — reconcile the two so
+    # manager.plan_id and manager.state.plan_id agree.
+    manager._state = state.model_copy(update={"plan_id": plan_id})
+    plan_store.save_plan(manager, instruction=f"uploaded {suffix} file")
+
+    logger.info("Uploaded plan %s (%d rooms)", plan_id, len(state.rooms))
+    return CreatePlanResponse(
+        plan_id=plan_id, name=plan_name, message=f"Uploaded {len(state.rooms)} room(s)."
     )
 
 

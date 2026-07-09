@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api, ApiError, type PlanState } from "@/lib/api";
 import { AuthModal } from "@/components/auth-modal";
@@ -16,6 +17,7 @@ type PlanEditorProps = {
 };
 
 export function PlanEditor({ planId, anonymous, initialState, onNewPlan }: PlanEditorProps) {
+  const router = useRouter();
   const [plan, setPlan] = useState<PlanState | null>(initialState ?? null);
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
@@ -88,6 +90,24 @@ export function PlanEditor({ planId, anonymous, initialState, onNewPlan }: PlanE
     else openAuthModal("Sign in to create another plan.");
   }, [anonymous, onNewPlan, openAuthModal]);
 
+  const handleUpload = useCallback(
+    async (file: File) => {
+      if (anonymous) return; // button shouldn't render, but belt-and-suspenders
+      try {
+        const { plan_id } = await api.uploadPlan(file);
+        toast.success("Plan uploaded.");
+        router.push(`/plans/${plan_id}`);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 413) {
+          toast.error("File too large (max 10 MB).");
+        } else {
+          toast.error(e instanceof Error ? e.message : "Upload failed.");
+        }
+      }
+    },
+    [anonymous, router]
+  );
+
   return (
     <div className="flex h-full w-full overflow-hidden">
       <EditorControls
@@ -104,6 +124,7 @@ export function PlanEditor({ planId, anonymous, initialState, onNewPlan }: PlanE
         lastSavedAt={lastSavedAt}
         onRename={renamePlan}
         onNewPlan={handleNewPlan}
+        onUpload={handleUpload}
         onRequestAuth={openAuthModal}
       />
       <EditorPreview planId={planId} version={plan?.version ?? null} />
