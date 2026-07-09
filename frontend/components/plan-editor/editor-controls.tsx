@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, Loader2, Download } from "lucide-react";
+import { ChevronLeft, Loader2, Download, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,6 +28,7 @@ type EditorControlsProps = {
   lastSavedAt: Date | null;
   onRename: (name: string) => void;
   onNewPlan: () => void;
+  onUpload: (file: File) => void;
   onRequestAuth: (reason?: string) => void;
 };
 
@@ -45,10 +46,12 @@ export function EditorControls({
   lastSavedAt,
   onRename,
   onNewPlan,
+  onUpload,
   onRequestAuth,
 }: EditorControlsProps) {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(planName);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const roomEntries = Object.entries(rooms);
 
   const commitName = () => {
@@ -119,6 +122,25 @@ export function EditorControls({
           <Button variant="outline" size="sm" onClick={onNewPlan}>
             New Plan
           </Button>
+        )}
+        {!anonymous && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".dxf,.json"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) onUpload(f);
+                e.target.value = ""; // allow re-uploading the same file
+              }}
+            />
+            <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+              <Upload className="mr-1.5 h-3.5 w-3.5" />
+              Upload
+            </Button>
+          </>
         )}
         {roomEntries.length > 0 && (
           <>
