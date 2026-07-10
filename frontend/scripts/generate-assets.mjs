@@ -197,7 +197,7 @@ async function main() {
 function buildIco(pngBuffers, sizes) {
   const numImages = pngBuffers.length;
   const headerSize = 6 + 16 * numImages;
-  const header = Buffer.alloc(headerSize);
+  const header = Buffer.alloc(6);
   header.writeUInt16LE(0, 0); // reserved
   header.writeUInt16LE(1, 2); // type: 1 = icon
   header.writeUInt16LE(numImages, 4);
