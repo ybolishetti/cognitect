@@ -8,15 +8,18 @@ import { Toaster } from "@/components/ui/sonner";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 const siteUrl = "https://cognitect-six.vercel.app";
-const title = "Cognitect — AI Floor Plan Engine";
+const defaultTitle = "Cognitect — AI Floor Plan Engine";
 const description = "Type natural language, watch a floor plan draw itself.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  title,
+  title: {
+    default: defaultTitle,
+    template: "%s — Cognitect",
+  },
   description,
   openGraph: {
-    title,
+    title: defaultTitle,
     description,
     url: siteUrl,
     siteName: "Cognitect",
@@ -33,7 +36,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title,
+    title: defaultTitle,
     description,
     images: ["/og-image.png"],
   },
