@@ -30,7 +30,9 @@ sqlalchemy>=2.0.0
 
 # Persistence (Supabase) + auth
 supabase>=2.0.0
-PyJWT>=2.8.0
+# [crypto] extra pulls in cryptography for ES256/RS256 verification of
+# Supabase's asymmetric JWTs (post ~mid-2026 default). Legacy HS256 still works.
+PyJWT[crypto]>=2.8.0
 
 # Validation / config
 pydantic>=2.0.0
