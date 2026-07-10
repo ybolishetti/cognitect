@@ -64,6 +64,9 @@ export function LandingPageClient() {
             Sign in with Google
           </Button>
         </div>
+        <Link href="/pricing" className="text-sm text-muted-foreground hover:text-foreground">
+          See pricing
+        </Link>
       </section>
 
       <section className="mx-auto grid max-w-4xl gap-8 px-6 pb-24 sm:grid-cols-3">
@@ -80,19 +83,27 @@ export function LandingPageClient() {
 
       <footer className="border-t px-6 py-8">
         <div className="mx-auto flex max-w-4xl flex-col items-center justify-between gap-4 text-sm text-muted-foreground sm:flex-row">
-          {/* TODO(yash): point at the real repo once it's public/known */}
-          <a
-            href="https://github.com"
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1.5 hover:text-foreground"
-          >
-            <Github className="h-4 w-4" />
-            GitHub
-          </a>
+          <div className="flex items-center gap-4">
+            <a
+              href="https://github.com/ybolishetti/cognitect"
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1.5 hover:text-foreground"
+            >
+              <Github className="h-4 w-4" />
+              GitHub
+            </a>
+            <Link href="/pricing" className="hover:text-foreground">
+              Pricing
+            </Link>
+          </div>
           <div className="flex gap-4">
-            <span className="cursor-default">Privacy</span>
-            <span className="cursor-default">Terms</span>
+            <Link href="/privacy" className="hover:text-foreground">
+              Privacy
+            </Link>
+            <Link href="/terms" className="hover:text-foreground">
+              Terms
+            </Link>
           </div>
         </div>
       </footer>
