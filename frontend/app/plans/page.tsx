@@ -1,8 +1,14 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { listPlansServer } from "@/lib/api-server";
 import { PlansList } from "@/components/plans-list";
 import { NewPlanButton } from "@/components/new-plan-button";
 import { UploadPlanButton } from "@/components/upload-plan-button";
+
+export const metadata: Metadata = {
+  title: "Your Plans",
+  description: "View, manage, and continue editing your saved floor plans.",
+};
 
 export default async function PlansPage() {
   const plans = await listPlansServer();
