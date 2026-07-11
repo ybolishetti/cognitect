@@ -30,6 +30,7 @@ type EditorControlsProps = {
   onNewPlan: () => void;
   onUpload: (file: File) => void;
   onRequestAuth: (reason?: string) => void;
+  showColdStartHint: boolean;
 };
 
 export function EditorControls({
@@ -48,6 +49,7 @@ export function EditorControls({
   onNewPlan,
   onUpload,
   onRequestAuth,
+  showColdStartHint,
 }: EditorControlsProps) {
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(planName);
@@ -176,18 +178,21 @@ export function EditorControls({
           placeholder="Describe your floor plan or give an instruction..."
           rows={3}
         />
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {EXAMPLES.map((ex) => (
-            <button
-              key={ex}
-              type="button"
-              onClick={() => onInstructionChange(ex)}
-              className="rounded-full border bg-panel px-2.5 py-1 text-xs text-muted-foreground hover:bg-secondary"
-            >
-              {ex}
-            </button>
-          ))}
-        </div>
+        <p className="mt-1.5 text-xs text-muted-foreground">Press ⌘ + Enter to submit</p>
+        {roomEntries.length === 0 && !instruction.trim() && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {EXAMPLES.map((ex) => (
+              <button
+                key={ex}
+                type="button"
+                onClick={() => onInstructionChange(ex)}
+                className="rounded-full border bg-panel px-2.5 py-1 text-xs text-muted-foreground hover:bg-secondary"
+              >
+                {ex}
+              </button>
+            ))}
+          </div>
+        )}
         <Button
           onClick={onSubmitInstruction}
           disabled={busy || !instruction.trim()}
@@ -199,9 +204,14 @@ export function EditorControls({
               Working…
             </>
           ) : (
-            "Send (⌘/Ctrl + Enter)"
+            "Send"
           )}
         </Button>
+        {showColdStartHint && (
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            Warming up… (first request after idle can take up to 15 seconds)
+          </p>
+        )}
       </div>
 
       {roomEntries.length > 0 && (

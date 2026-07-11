@@ -12,11 +12,10 @@ export const ROOM_COLORS: Record<string, string> = {
 };
 
 export const EXAMPLES = [
-  "Add a 300 sqft living room",
-  "Add a kitchen next to the living room, 150 sqft",
-  "Add a master bedroom of 200 sqft",
-  "Make the kitchen bigger",
-  "Remove the hallway",
+  "A 12×14 bedroom next to a bathroom",
+  "3-bedroom apartment with an open kitchen and living room",
+  "L-shaped studio with a 10×10 sleeping alcove",
+  "Two-bedroom cottage, master ensuite, shared bath, 900 sqft total",
 ];
 
 export const ANON_PLAN_STORAGE_KEY = "cognitect_current_anon_plan";

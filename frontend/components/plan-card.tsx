@@ -4,6 +4,8 @@ import Link from "next/link";
 import { MoreVertical } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,12 +38,16 @@ type PlanCardProps = {
   plan: PlanListItem;
   onRename: (plan: PlanListItem) => void;
   onDelete: (plan: PlanListItem) => void;
+  isDeleting?: boolean;
 };
 
-export function PlanCard({ plan, onRename, onDelete }: PlanCardProps) {
+export function PlanCard({ plan, onRename, onDelete, isDeleting }: PlanCardProps) {
   return (
     <Card className="relative overflow-hidden p-0">
-      <Link href={`/plans/${plan.id}`} className="block">
+      <Link
+        href={`/plans/${plan.id}`}
+        className={cn("block", isDeleting && "pointer-events-none opacity-40")}
+      >
         {/* TODO(phase-3): use thumbnail_url when generation lands — it's
             always null in Phase 1, no generator job exists yet. */}
         <div
@@ -59,6 +65,7 @@ export function PlanCard({ plan, onRename, onDelete }: PlanCardProps) {
           </p>
         </div>
       </Link>
+      {isDeleting && <Skeleton className="absolute inset-0 z-10" />}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
