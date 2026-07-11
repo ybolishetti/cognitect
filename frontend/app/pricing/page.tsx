@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { PricingCta } from "./pricing-cta";
 
 export const metadata: Metadata = {
   title: { absolute: "Pricing — Cognitect" },
@@ -46,9 +45,7 @@ export default function PricingPage() {
         </CardContent>
       </Card>
 
-      <Button asChild size="lg">
-        <Link href="/">Sign in with Google</Link>
-      </Button>
+      <PricingCta />
     </main>
   );
 }
