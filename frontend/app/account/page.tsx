@@ -58,15 +58,13 @@ export default function AccountPage() {
         >
           Sign out
         </Button>
-        <Button
-          variant="ghost"
-          className="text-destructive hover:text-destructive"
-          onClick={() =>
-            toast.info("Account deletion coming soon. Email support@cognitect.app to delete manually.")
-          }
-        >
-          Delete account
-        </Button>
+        <p className="text-sm text-muted-foreground">
+          Need to delete your account? Email{" "}
+          <a href="mailto:support@cognitect.app" className="underline">
+            support@cognitect.app
+          </a>
+          .
+        </p>
       </div>
     </main>
   );
