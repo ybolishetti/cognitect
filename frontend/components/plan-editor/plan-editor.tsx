@@ -7,6 +7,7 @@ import { api, ApiError, type PlanState } from "@/lib/api";
 import { AuthModal } from "@/components/auth-modal";
 import { EditorControls } from "@/components/plan-editor/editor-controls";
 import { EditorPreview } from "@/components/plan-editor/editor-preview";
+import { handle429 } from "@/lib/rate-limit";
 
 type PlanEditorProps = {
   planId: string;
@@ -60,23 +61,14 @@ export function PlanEditor({ planId, anonymous, initialState, onNewPlan }: PlanE
       setInstruction("");
       setLastSavedAt(new Date());
     } catch (e) {
-      if (e instanceof ApiError && e.status === 429) {
-        const hours = Math.ceil((e.retryAfterSeconds ?? 3600) / 3600);
-        toast.error(
-          `Rate limit reached. Try again in ~${hours}h, or sign in for a higher limit.`,
-          anonymous
-            ? { action: { label: "Sign in", onClick: () => openAuthModal() } }
-            : undefined
-        );
-      } else {
-        toast.error(e instanceof Error ? e.message : "The instruction could not be applied.");
-      }
+      if (handle429(e, { isAnonymous: anonymous, openAuthModal: () => openAuthModal(), router })) return;
+      toast.error(e instanceof Error ? e.message : "The instruction could not be applied.");
     } finally {
       if (coldStartTimer) clearTimeout(coldStartTimer);
       setShowColdStartHint(false);
       setBusy(false);
     }
-  }, [planId, instruction, anonymous, openAuthModal]);
+  }, [planId, instruction, anonymous, openAuthModal, router]);
 
   const renamePlan = useCallback(
     async (name: string) => {
@@ -89,10 +81,11 @@ export function PlanEditor({ planId, anonymous, initialState, onNewPlan }: PlanE
         setPlan((p) => (p ? { ...p, name: savedName } : p));
         setLastSavedAt(new Date());
       } catch (e) {
+        if (handle429(e, { isAnonymous: anonymous, openAuthModal: () => openAuthModal(), router })) return;
         toast.error(e instanceof Error ? e.message : "Could not rename this plan.");
       }
     },
-    [planId, anonymous, openAuthModal]
+    [planId, anonymous, openAuthModal, router]
   );
 
   const handleNewPlan = useCallback(() => {
@@ -109,6 +102,7 @@ export function PlanEditor({ planId, anonymous, initialState, onNewPlan }: PlanE
         toast.success("Plan uploaded.");
         router.push(`/plans/${plan_id}`);
       } catch (e) {
+        if (handle429(e, { isAnonymous: anonymous, openAuthModal: () => openAuthModal(), router })) return;
         if (e instanceof ApiError && e.status === 413) {
           toast.error("File too large (max 10 MB).");
         } else {
@@ -116,7 +110,7 @@ export function PlanEditor({ planId, anonymous, initialState, onNewPlan }: PlanE
         }
       }
     },
-    [anonymous, router]
+    [anonymous, router, openAuthModal]
   );
 
   return (

@@ -5,7 +5,10 @@ import { useRouter } from "next/navigation";
 import { Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { AuthModal } from "@/components/auth-modal";
+import { useAuth } from "@/components/providers/auth-provider";
 import { api, ApiError } from "@/lib/api";
+import { handle429 } from "@/lib/rate-limit";
 
 export function UploadPlanButton({
   variant = "outline",
@@ -13,8 +16,10 @@ export function UploadPlanButton({
   variant?: "default" | "outline";
 }) {
   const router = useRouter();
+  const { user } = useAuth();
   const ref = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
 
   const handleFile = async (file: File) => {
     setUploading(true);
@@ -23,6 +28,7 @@ export function UploadPlanButton({
       toast.success("Plan uploaded.");
       router.push(`/plans/${plan_id}`);
     } catch (e) {
+      if (handle429(e, { isAnonymous: !user, openAuthModal: () => setAuthOpen(true), router })) return;
       if (e instanceof ApiError && e.status === 413) {
         toast.error("File too large (max 10 MB).");
       } else if (e instanceof ApiError && e.status === 400) {
@@ -52,6 +58,7 @@ export function UploadPlanButton({
         <Upload className="mr-2 h-4 w-4" />
         Upload
       </Button>
+      <AuthModal open={authOpen} onOpenChange={setAuthOpen} />
     </>
   );
 }

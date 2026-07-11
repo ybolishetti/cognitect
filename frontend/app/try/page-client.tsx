@@ -1,13 +1,15 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AuthModal } from "@/components/auth-modal";
 import { PlanEditor } from "@/components/plan-editor/plan-editor";
 import { useAuth } from "@/components/providers/auth-provider";
 import { api } from "@/lib/api";
+import { handle429 } from "@/lib/rate-limit";
 import { ANON_PLAN_STORAGE_KEY } from "@/lib/constants";
 
 // Reconciles two persistence mechanisms the spec docs disagree on: the
@@ -20,37 +22,62 @@ function TryPageInner() {
   const { user } = useAuth();
   const [planId, setPlanId] = useState<string | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const mountedRef = useRef(true);
 
-  useEffect(() => {
-    let cancelled = false;
+  const resolvePlan = useCallback(async () => {
+    setLoadError(false);
+    const stored = localStorage.getItem(ANON_PLAN_STORAGE_KEY);
+    if (stored) {
+      if (searchParams.get("plan") !== stored) router.replace(`/try?plan=${stored}`);
+      if (mountedRef.current) setPlanId(stored);
+      return;
+    }
 
-    async function resolvePlan() {
-      const stored = localStorage.getItem(ANON_PLAN_STORAGE_KEY);
-      if (stored) {
-        if (searchParams.get("plan") !== stored) router.replace(`/try?plan=${stored}`);
-        if (!cancelled) setPlanId(stored);
-        return;
-      }
+    const fromUrl = searchParams.get("plan");
+    if (fromUrl) {
+      localStorage.setItem(ANON_PLAN_STORAGE_KEY, fromUrl);
+      if (mountedRef.current) setPlanId(fromUrl);
+      return;
+    }
 
-      const fromUrl = searchParams.get("plan");
-      if (fromUrl) {
-        localStorage.setItem(ANON_PLAN_STORAGE_KEY, fromUrl);
-        if (!cancelled) setPlanId(fromUrl);
-        return;
-      }
-
+    try {
       const { plan_id } = await api.createPlan();
       localStorage.setItem(ANON_PLAN_STORAGE_KEY, plan_id);
       router.replace(`/try?plan=${plan_id}`);
-      if (!cancelled) setPlanId(plan_id);
+      if (mountedRef.current) setPlanId(plan_id);
+    } catch (e) {
+      if (!mountedRef.current) return;
+      if (handle429(e, { isAnonymous: true, openAuthModal: () => setAuthOpen(true), router })) {
+        setLoadError(true);
+        return;
+      }
+      toast.error(e instanceof Error ? e.message : "Could not start a new plan.");
+      setLoadError(true);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  useEffect(() => {
+    mountedRef.current = true;
     resolvePlan();
     return () => {
-      cancelled = true;
+      mountedRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  if (loadError) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+        <p className="text-sm text-muted-foreground">Could not start a new plan.</p>
+        <Button size="sm" variant="outline" onClick={() => resolvePlan()}>
+          Try again
+        </Button>
+        <AuthModal open={authOpen} onOpenChange={setAuthOpen} />
+      </div>
+    );
+  }
 
   if (!planId) {
     return (
