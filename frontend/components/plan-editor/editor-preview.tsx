@@ -2,6 +2,7 @@
 
 import { Loader2 } from "lucide-react";
 import { usePreviewBlob } from "@/lib/hooks/use-preview-blob";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type EditorPreviewProps = {
   planId: string;
@@ -16,7 +17,9 @@ export function EditorPreview({ planId, version }: EditorPreviewProps) {
       {!url && !loading && (
         <p className="text-muted-foreground">Start describing your floor plan</p>
       )}
-      {loading && !url && <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />}
+      {loading && !url && (
+        <Skeleton className="h-[70vh] max-h-[600px] w-[90%] max-w-3xl rounded-lg" />
+      )}
       {url && (
         <div className="relative max-h-full max-w-full overflow-hidden rounded-lg bg-white shadow-lg">
           {loading && (

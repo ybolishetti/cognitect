@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { api, ApiError, type PlanState } from "@/lib/api";
@@ -22,6 +22,8 @@ export function PlanEditor({ planId, anonymous, initialState, onNewPlan }: PlanE
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const [showColdStartHint, setShowColdStartHint] = useState(false);
+  const coldStartShownRef = useRef(false);
   const [authModal, setAuthModal] = useState<{ open: boolean; reason?: string }>({
     open: false,
   });
@@ -44,6 +46,13 @@ export function PlanEditor({ planId, anonymous, initialState, onNewPlan }: PlanE
   const sendInstruction = useCallback(async () => {
     if (!instruction.trim()) return;
     setBusy(true);
+    let coldStartTimer: ReturnType<typeof setTimeout> | undefined;
+    if (!coldStartShownRef.current) {
+      coldStartTimer = setTimeout(() => {
+        setShowColdStartHint(true);
+        coldStartShownRef.current = true;
+      }, 3000);
+    }
     try {
       await api.instruct(planId, instruction.trim());
       const refreshed = await api.getPlan(planId);
@@ -63,6 +72,8 @@ export function PlanEditor({ planId, anonymous, initialState, onNewPlan }: PlanE
         toast.error(e instanceof Error ? e.message : "The instruction could not be applied.");
       }
     } finally {
+      if (coldStartTimer) clearTimeout(coldStartTimer);
+      setShowColdStartHint(false);
       setBusy(false);
     }
   }, [planId, instruction, anonymous, openAuthModal]);
@@ -126,6 +137,7 @@ export function PlanEditor({ planId, anonymous, initialState, onNewPlan }: PlanE
         onNewPlan={handleNewPlan}
         onUpload={handleUpload}
         onRequestAuth={openAuthModal}
+        showColdStartHint={showColdStartHint}
       />
       <EditorPreview planId={planId} version={plan?.version ?? null} />
       <AuthModal

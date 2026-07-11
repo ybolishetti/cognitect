@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
@@ -30,7 +30,9 @@ export function PlansList({ initialPlans }: { initialPlans: PlanListItem[] }) {
   const [search, setSearch] = useState("");
   const [renameTarget, setRenameTarget] = useState<PlanListItem | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [renaming, setRenaming] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<PlanListItem | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -38,25 +40,38 @@ export function PlansList({ initialPlans }: { initialPlans: PlanListItem[] }) {
     return initialPlans.filter((p) => p.name.toLowerCase().includes(q));
   }, [initialPlans, search]);
 
+  // Once the refreshed plan list no longer contains the deleted id, the
+  // overlay has served its purpose.
+  useEffect(() => {
+    if (deletingId && !initialPlans.some((p) => p.id === deletingId)) {
+      setDeletingId(null);
+    }
+  }, [initialPlans, deletingId]);
+
   const handleRename = async () => {
     if (!renameTarget || !renameDraft.trim()) return;
+    setRenaming(true);
     try {
       await api.renamePlan(renameTarget.id, renameDraft.trim());
       setRenameTarget(null);
       router.refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not rename this plan.");
+    } finally {
+      setRenaming(false);
     }
   };
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
+    setDeletingId(deleteTarget.id);
+    setDeleteTarget(null);
     try {
       await api.deletePlan(deleteTarget.id);
-      setDeleteTarget(null);
       router.refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not delete this plan.");
+      setDeletingId(null);
     }
   };
 
@@ -78,6 +93,7 @@ export function PlansList({ initialPlans }: { initialPlans: PlanListItem[] }) {
               setRenameDraft(p.name);
             }}
             onDelete={setDeleteTarget}
+            isDeleting={plan.id === deletingId}
           />
         ))}
       </div>
@@ -97,8 +113,8 @@ export function PlansList({ initialPlans }: { initialPlans: PlanListItem[] }) {
             <Button variant="outline" onClick={() => setRenameTarget(null)}>
               Cancel
             </Button>
-            <Button onClick={handleRename} disabled={!renameDraft.trim()}>
-              Save
+            <Button onClick={handleRename} disabled={!renameDraft.trim() || renaming}>
+              {renaming ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
         </DialogContent>
