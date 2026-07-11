@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 
 export default function GlobalError({
@@ -12,7 +13,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    // TODO(sentry): Sentry.captureException(error) — hooked in DRAFT G
+    Sentry.captureException(error);
   }, [error]);
 
   return (

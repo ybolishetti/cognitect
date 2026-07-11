@@ -20,6 +20,16 @@ from dotenv import load_dotenv
 load_dotenv()  # must run before importing plans_v2 -> plan_store, which reads
                 # SUPABASE_URL/SUPABASE_SERVICE_KEY at module import time
 
+import sentry_sdk
+
+if os.getenv("SENTRY_DSN"):
+    sentry_sdk.init(
+        dsn=os.environ["SENTRY_DSN"],
+        traces_sample_rate=0.1,
+        profiles_sample_rate=0.1,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+    )
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
