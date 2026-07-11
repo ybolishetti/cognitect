@@ -1,3 +1,5 @@
+const { withSentryConfig } = require("@sentry/nextjs");
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -7,4 +9,8 @@ const nextConfig = {
   // wherever the backend runs.
 };
 
-module.exports = nextConfig;
+module.exports = withSentryConfig(nextConfig, {
+  silent: true,
+  org: "TODO(yash): your Sentry org slug",
+  project: "TODO(yash): frontend project slug",
+});

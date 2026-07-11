@@ -4,6 +4,7 @@ import "./globals.css";
 import { AuthProvider } from "@/components/providers/auth-provider";
 import { Header } from "@/components/header";
 import { Toaster } from "@/components/ui/sonner";
+import { Analytics } from "@vercel/analytics/react";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -68,6 +69,7 @@ export default function RootLayout({
             <div className="min-h-0 flex-1">{children}</div>
           </div>
           <Toaster />
+          <Analytics />
         </AuthProvider>
       </body>
     </html>

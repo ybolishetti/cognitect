@@ -38,6 +38,9 @@ PyJWT[crypto]>=2.8.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 
+# Error tracking
+sentry-sdk[fastapi]>=2.0
+
 # Testing
 # httpx pinned <0.28: 0.28 dropped TestClient's `app=` shortcut, which the
 # pinned starlette (via fastapi==0.104.1) still relies on. `supabase` package
