@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AuthModal } from "@/components/auth-modal";
 import { PlanEditor } from "@/components/plan-editor/plan-editor";
+import { useAuth } from "@/components/providers/auth-provider";
 import { api } from "@/lib/api";
 import { ANON_PLAN_STORAGE_KEY } from "@/lib/constants";
 
@@ -16,6 +17,7 @@ import { ANON_PLAN_STORAGE_KEY } from "@/lib/constants";
 function TryPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
   const [planId, setPlanId] = useState<string | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
 
@@ -60,12 +62,14 @@ function TryPageInner() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-3 border-b bg-panel px-4 py-2 text-sm">
-        <span className="text-muted-foreground">Sign in to save this plan across devices</span>
-        <Button size="sm" variant="outline" onClick={() => setAuthOpen(true)}>
-          Sign in
-        </Button>
-      </div>
+      {!user && (
+        <div className="flex items-center justify-between gap-3 border-b bg-panel px-4 py-2 text-sm">
+          <span className="text-muted-foreground">Sign in to save this plan across devices</span>
+          <Button size="sm" variant="outline" onClick={() => setAuthOpen(true)}>
+            Sign in
+          </Button>
+        </div>
+      )}
       <div className="min-h-0 flex-1">
         <PlanEditor planId={planId} anonymous />
       </div>
