@@ -23,16 +23,21 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { PlanCard } from "@/components/plan-card";
+import { AuthModal } from "@/components/auth-modal";
+import { useAuth } from "@/components/providers/auth-provider";
 import { api, type PlanListItem } from "@/lib/api";
+import { handle429 } from "@/lib/rate-limit";
 
 export function PlansList({ initialPlans }: { initialPlans: PlanListItem[] }) {
   const router = useRouter();
+  const { user } = useAuth();
   const [search, setSearch] = useState("");
   const [renameTarget, setRenameTarget] = useState<PlanListItem | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [renaming, setRenaming] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<PlanListItem | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -56,6 +61,7 @@ export function PlansList({ initialPlans }: { initialPlans: PlanListItem[] }) {
       setRenameTarget(null);
       router.refresh();
     } catch (e) {
+      if (handle429(e, { isAnonymous: !user, openAuthModal: () => setAuthOpen(true), router })) return;
       toast.error(e instanceof Error ? e.message : "Could not rename this plan.");
     } finally {
       setRenaming(false);
@@ -70,6 +76,10 @@ export function PlansList({ initialPlans }: { initialPlans: PlanListItem[] }) {
       await api.deletePlan(deleteTarget.id);
       router.refresh();
     } catch (e) {
+      if (handle429(e, { isAnonymous: !user, openAuthModal: () => setAuthOpen(true), router })) {
+        setDeletingId(null);
+        return;
+      }
       toast.error(e instanceof Error ? e.message : "Could not delete this plan.");
       setDeletingId(null);
     }
@@ -139,6 +149,8 @@ export function PlansList({ initialPlans }: { initialPlans: PlanListItem[] }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <AuthModal open={authOpen} onOpenChange={setAuthOpen} />
     </>
   );
 }
