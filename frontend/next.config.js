@@ -11,6 +11,6 @@ const nextConfig = {
 
 module.exports = withSentryConfig(nextConfig, {
   silent: true,
-  org: "TODO(yash): your Sentry org slug",
-  project: "TODO(yash): frontend project slug",
+  org: "cognitect",
+  project: "cognitect-frontend",
 });
