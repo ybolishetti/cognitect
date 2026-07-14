@@ -1,7 +1,7 @@
 """Tests for engine/generators — the LayoutGenerator interface and
 StubGenerator (Architecture C, DRAFT 3).
 
-4 groups, 15 tests total. All fast, no network, no LLM:
+4 groups, 16 tests total. All fast, no network, no LLM:
   1. Interface contract (GeneratorFactory dispatch)
   2. Happy path (StubGenerator produces valid, deterministic Layouts)
   3. Geometry contract (assumptions Layer A depends on downstream)
@@ -33,10 +33,9 @@ def test_factory_returns_stub_when_env_set_to_stub(monkeypatch):
     assert isinstance(GeneratorFactory.from_env(), StubGenerator)
 
 
-def test_factory_raises_not_implemented_for_prompted(monkeypatch):
-    monkeypatch.setenv("LAYOUT_GENERATOR", "prompted")
-    with pytest.raises(NotImplementedError, match="DRAFT_ARCH_C_4"):
-        GeneratorFactory.from_env()
+# NOTE: "prompted" now dispatches to a real PromptedGenerator (DRAFT 4) —
+# see tests/test_prompted_generator.py::test_factory_by_name_prompted_returns_prompted_generator
+# and ::test_factory_from_env_prompted for the equivalent coverage.
 
 
 def test_factory_raises_value_error_for_unknown_kind():
