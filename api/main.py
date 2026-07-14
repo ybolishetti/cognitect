@@ -39,6 +39,7 @@ from api.routes.plan import router as plan_router
 from api.routes.preview import router as preview_router
 from api.routes.load import router as load_router
 from api.routes.plans_v2 import router as plans_v2_router
+from api.routes.plans_v2_generate import router as plans_v2_generate_router
 from api.storage import plan_store
 
 logging.basicConfig(
@@ -78,6 +79,7 @@ app.include_router(plan_router)
 app.include_router(preview_router)
 app.include_router(load_router)
 app.include_router(plans_v2_router)
+app.include_router(plans_v2_generate_router)
 
 
 @app.get("/health", tags=["meta"])

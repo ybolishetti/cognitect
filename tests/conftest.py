@@ -82,6 +82,10 @@ class _FakeQuery:
         self._filters.append(("gte", col, val))
         return self
 
+    def is_(self, col, val):
+        self._filters.append(("is", col, val))
+        return self
+
     def order(self, col, desc=False):
         self._order = (col, desc)
         return self
@@ -95,6 +99,8 @@ class _FakeQuery:
             if op == "eq" and row.get(col) != val:
                 return False
             if op == "gte" and (row.get(col) is None or row.get(col) < val):
+                return False
+            if op == "is" and row.get(col) is not val:
                 return False
         return True
 
@@ -122,7 +128,7 @@ class _FakeQuery:
         matched = [dict(r) for r in self._rows if self._matches(r)]
         if self._order:
             col, desc = self._order
-            matched.sort(key=lambda r: r.get(col) or "", reverse=desc)
+            matched.sort(key=lambda r: (r.get(col) is None, r.get(col)), reverse=desc)
         count = len(matched) if self._count_mode else None
         if self._limit is not None:
             matched = matched[: self._limit]

@@ -12,8 +12,9 @@ project (`ynyjxmgfkptlvxrnfgmq`).
 1. Open the project's SQL Editor at
    `https://supabase.com/dashboard/project/ynyjxmgfkptlvxrnfgmq/sql/new`.
 2. Paste and run each file **in order**, one at a time: `001_init.sql` →
-   `002_rls.sql` → `003_claim_rpc.sql` → `004_trim_versions.sql`.
-3. Confirm no errors before moving to the next file — `002`–`004` depend on
+   `002_rls.sql` → `003_claim_rpc.sql` → `004_trim_versions.sql` →
+   `005_generated_layouts.sql`.
+3. Confirm no errors before moving to the next file — `002`–`005` depend on
    tables created in `001`.
 
 **Option B — Supabase CLI**, if installed and linked to the project:
@@ -38,3 +39,7 @@ This applies every file under `db/migrations/` in filename order.
 - `004_trim_versions.sql` — `trim_plan_versions(plan_id, keep)`, called after
   every save to cap `plan_versions` history at the most recent `keep` rows
   (the backend calls this with `keep=50`).
+- `005_generated_layouts.sql` — `generated_plans` (header row per
+  `POST /v2/plans/generate` call, with `spec_hash` for cache lookups) and
+  `generated_layout_versions` (per-candidate Layout + audit manifest, keyed
+  by `selection_rank`), plus RLS policies mirroring `plans`/`plan_versions`.
