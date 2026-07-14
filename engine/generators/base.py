@@ -109,10 +109,8 @@ class GeneratorFactory:
             from engine.generators.stub import StubGenerator
             return StubGenerator()
         if kind == "prompted":
-            raise NotImplementedError(
-                "PromptedGenerator ships in DRAFT_ARCH_C_4. Set "
-                "LAYOUT_GENERATOR=stub for now."
-            )
+            from engine.generators.prompted import PromptedGenerator
+            return PromptedGenerator()
         if kind == "finetuned":
             raise NotImplementedError(
                 "FineTunedGenerator ships in DRAFT_ARCH_C_7. Set "

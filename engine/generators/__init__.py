@@ -6,6 +6,8 @@ from engine.generators.base import (
     GeneratorMetadata,
     LayoutGenerator,
 )
+from engine.generators.prompted import PromptedGenerator
+from engine.generators.prompts import PROMPTED_VERSION
 from engine.generators.stub import STUB_VERSION, StubGenerator
 
 __all__ = [
@@ -13,6 +15,8 @@ __all__ = [
     "GeneratorFailure",
     "GeneratorMetadata",
     "LayoutGenerator",
+    "PromptedGenerator",
+    "PROMPTED_VERSION",
     "StubGenerator",
     "STUB_VERSION",
 ]
