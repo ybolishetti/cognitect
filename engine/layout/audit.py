@@ -37,4 +37,5 @@ class LayoutAuditManifest(BaseModel):
     total_candidates: int  # how many candidates were generated before filtering
     survived_layer_a: int
     survived_layer_c: int
+    user_score: Optional[float] = Field(None, ge=0.0, le=1.0)  # combined score used for selection
     metadata: dict = Field(default_factory=dict)
