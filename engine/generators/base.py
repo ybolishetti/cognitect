@@ -112,10 +112,8 @@ class GeneratorFactory:
             from engine.generators.prompted import PromptedGenerator
             return PromptedGenerator()
         if kind == "finetuned":
-            raise NotImplementedError(
-                "FineTunedGenerator ships in DRAFT_ARCH_C_7. Set "
-                "LAYOUT_GENERATOR=stub for now."
-            )
+            from engine.generators.finetuned import FineTunedGenerator
+            return FineTunedGenerator()
         raise ValueError(
             f"Unknown LAYOUT_GENERATOR value {kind!r}. "
             f"Valid: 'stub', 'prompted', 'finetuned'."

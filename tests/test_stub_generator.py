@@ -132,13 +132,21 @@ def test_room_vertices_are_ccw_and_closed():
         # if the corner-emission order in _make_rooms ever changes.
 
 
-def test_openings_only_on_interior_walls():
+def test_openings_on_interior_and_exterior_walls():
+    """After DRAFT 7 (egress patch), stub emits BOTH interior doors AND
+    at least one exterior door for Layer C R311.2 compliance."""
     layout = StubGenerator().generate(_make_spec_3_rooms())[0]
     walls_by_id = {w.id: w for w in layout.walls}
+    interior_openings = 0
+    exterior_openings = 0
     for opening in layout.openings:
         wall = walls_by_id[opening.wall_id]
-        assert len(wall.bounds_rooms) == 2, \
-            "stub emits openings only on interior walls"
+        if len(wall.bounds_rooms) == 2:
+            interior_openings += 1
+        elif len(wall.bounds_rooms) == 1:
+            exterior_openings += 1
+    assert interior_openings >= 1, "expected at least one interior door"
+    assert exterior_openings >= 1, "expected at least one exterior door/window (DRAFT 7 egress patch)"
 
 
 def test_multi_row_layout_documents_known_limitation():
