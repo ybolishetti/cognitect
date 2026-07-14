@@ -363,9 +363,9 @@ def test_factory_unknown_kind_still_raises_value_error():
         GeneratorFactory.by_name("nonsense")
 
 
-def test_factory_finetuned_still_raises_not_implemented():
-    with pytest.raises(NotImplementedError, match="DRAFT_ARCH_C_7"):
-        GeneratorFactory.by_name("finetuned")
+# NOTE: "finetuned" now dispatches to a real FineTunedGenerator placeholder
+# (DRAFT 7) — see tests/test_finetuned_generator.py for its coverage,
+# including the NotImplementedError raised from generate() (not by_name()).
 
 
 # ── Live test (skipped by default) ──────────────────────────────────────────

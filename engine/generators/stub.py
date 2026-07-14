@@ -53,7 +53,7 @@ from engine.layout import (
 # changes in a way that would produce different Layouts for the same
 # FloorPlanSpec — e.g. wall thickness default changes, opening insertion
 # heuristics change, room ordering changes.
-STUB_VERSION = "2026-07-13"
+STUB_VERSION = "2026-07-14"  # was "2026-07-13" — added egress emissions (DRAFT 7)
 
 # Wall thickness for stub output. Real fine-tuned generator will vary
 # this per-wall (load-bearing vs partition). Stub uses one value for all
@@ -65,6 +65,15 @@ STUB_WALL_THICKNESS_FT = 0.5
 # authoring expected failures.
 DEFAULT_DOOR_WIDTH_FT = 3.0
 DEFAULT_DOOR_OFFSET_MARGIN_FT = 1.0
+
+# Egress additions (DRAFT 7). Layer C's IRC §R311.2 requires >= 3.0 ft
+# for the primary exterior egress door and §R310.1 requires an operable
+# exterior opening on every bedroom. The stub, being deterministic and
+# non-jurisdictional, picks the minimum-conforming values and the
+# longest available exterior wall for placement.
+STUB_EXTERIOR_DOOR_WIDTH_FT = DEFAULT_DOOR_WIDTH_FT  # 3.0 ft, meets R311.2 exactly
+STUB_BEDROOM_WINDOW_WIDTH_FT = 3.0                   # nominal — R310.2 sub-req not enforced yet
+STUB_BEDROOM_WINDOW_SILL_HEIGHT_FT = 3.0             # 36" — plausible default
 
 # RoomSpec.room_type (intent_parser) has a narrower literal than the Arch C
 # RoomType used by RoomRequirement — it lacks "utility" and "closet". Map
@@ -409,6 +418,120 @@ def _make_openings(walls: list[Wall]) -> tuple[list[Opening], list[str]]:
     return openings, skipped_wall_ids
 
 
+def _emit_exterior_egress_door(
+    walls: list[Wall],
+    starting_opening_index: int,
+) -> tuple[Opening | None, int]:
+    """Add ONE exterior door to satisfy IRC §R311.2.
+
+    Picks the longest exterior wall across all rooms (ties broken by
+    wall.id sort — deterministic). Returns (opening, next_opening_index).
+    If no exterior wall is long enough to fit a door with the margins
+    the interior-door emission uses, returns (None, starting_opening_index)
+    — Layer C will flag it and best-of-N drops the candidate, which is
+    the correct fail-loud behavior. This should never happen for a spec
+    that produces a non-trivial layout.
+    """
+    min_length = STUB_EXTERIOR_DOOR_WIDTH_FT + 2 * DEFAULT_DOOR_OFFSET_MARGIN_FT
+    exterior_candidates = [
+        w for w in walls
+        if len(w.bounds_rooms) == 1 and w.length_ft > min_length
+    ]
+    if not exterior_candidates:
+        return None, starting_opening_index
+
+    # Deterministic pick: longest wall, then wall.id ascending.
+    exterior_candidates.sort(key=lambda w: (-w.length_ft, w.id))
+    wall = exterior_candidates[0]
+
+    offset = (wall.length_ft - STUB_EXTERIOR_DOOR_WIDTH_FT) / 2
+    opening = Opening(
+        id=f"opening_{starting_opening_index:04d}",
+        opening_type="door",
+        wall_id=wall.id,
+        offset_ft=offset,
+        width_ft=STUB_EXTERIOR_DOOR_WIDTH_FT,
+        # For a door on an exterior wall (bounds_rooms length 1), swings
+        # into the single bounded room.
+        swings_into_room_id=wall.bounds_rooms[0],
+    )
+    return opening, starting_opening_index + 1
+
+
+def _emit_bedroom_egress_windows(
+    rooms: list[Room],
+    walls: list[Wall],
+    existing_openings: list[Opening],
+    starting_opening_index: int,
+) -> tuple[list[Opening], int]:
+    """Add ONE window per bedroom that lacks an exterior-wall opening.
+
+    Satisfies IRC §R310.1 (as enforced by Layer C in this DRAFT — the
+    weaker form: any door or window on an exterior wall of the bedroom).
+    Skips bedrooms that already have a door or window on any exterior
+    wall (e.g. if the R311.2 exterior door was placed on a bedroom's
+    exterior wall, that bedroom is already compliant and gets no window).
+
+    Windows go on the longest exterior wall of that bedroom (ties by
+    wall.id sort — deterministic).
+    """
+    walls_by_id = {w.id: w for w in walls}
+    existing_by_wall: dict[str, list[Opening]] = {}
+    for op in existing_openings:
+        existing_by_wall.setdefault(op.wall_id, []).append(op)
+
+    min_length = STUB_BEDROOM_WINDOW_WIDTH_FT + 2 * DEFAULT_DOOR_OFFSET_MARGIN_FT
+    new_openings: list[Opening] = []
+    opening_index = starting_opening_index
+
+    for room in rooms:
+        if room.room_type != "bedroom":
+            continue
+
+        # Bedroom's exterior walls (bounds_rooms == [this room])
+        exterior_walls = [
+            walls_by_id[wid]
+            for wid in room.boundary_wall_ids
+            if wid in walls_by_id
+            and len(walls_by_id[wid].bounds_rooms) == 1
+            and walls_by_id[wid].bounds_rooms[0] == room.id
+        ]
+
+        # Already has an exterior opening (door or window)?
+        already_compliant = any(
+            any(op.opening_type in ("door", "window") for op in existing_by_wall.get(w.id, []))
+            for w in exterior_walls
+        )
+        if already_compliant:
+            continue
+
+        # Pick the longest exterior wall that can fit a window.
+        candidates = [w for w in exterior_walls if w.length_ft > min_length]
+        if not candidates:
+            # Bedroom has no exterior wall long enough — Layer C will
+            # flag it. Correct fail-loud path; don't fabricate geometry.
+            continue
+
+        candidates.sort(key=lambda w: (-w.length_ft, w.id))
+        wall = candidates[0]
+
+        offset = (wall.length_ft - STUB_BEDROOM_WINDOW_WIDTH_FT) / 2
+        new_openings.append(
+            Opening(
+                id=f"opening_{opening_index:04d}",
+                opening_type="window",
+                wall_id=wall.id,
+                offset_ft=offset,
+                width_ft=STUB_BEDROOM_WINDOW_WIDTH_FT,
+                sill_height_ft=STUB_BEDROOM_WINDOW_SILL_HEIGHT_FT,
+                # No swings_into_room_id for windows.
+            )
+        )
+        opening_index += 1
+
+    return new_openings, opening_index
+
+
 def _attach_boundary_walls(
     rooms: list[_PartialRoom],
     room_bboxes: dict[str, tuple[float, float, float, float]],
@@ -459,6 +582,10 @@ def _matrix_to_layout(
       - _make_walls: dedupe edges shared between rectangles into one
         interior wall bounding two rooms
       - _make_openings: one door per interior wall, centered
+      - _emit_exterior_egress_door / _emit_bedroom_egress_windows: Layer C
+        egress compliance (DRAFT 7) — run after boundary walls are
+        attached, since bedroom window placement needs
+        Room.boundary_wall_ids.
     """
     rooms, room_bboxes = _make_rooms(matrix, room_type_by_id, room_name_by_id)
     walls, wall_bounds_by_edge = _make_walls(rooms, room_bboxes)
@@ -466,6 +593,17 @@ def _matrix_to_layout(
 
     # Attach boundary_wall_ids to each Room now that walls are known
     rooms_with_boundaries = _attach_boundary_walls(rooms, room_bboxes, wall_bounds_by_edge)
+
+    # Egress additions for Layer C compliance (DRAFT 7).
+    next_idx = len(openings)
+    exterior_door, next_idx = _emit_exterior_egress_door(walls, next_idx)
+    if exterior_door is not None:
+        openings.append(exterior_door)
+
+    bedroom_windows, next_idx = _emit_bedroom_egress_windows(
+        rooms_with_boundaries, walls, openings, next_idx
+    )
+    openings.extend(bedroom_windows)
 
     max_x = max((x for r in rooms_with_boundaries for x, _ in r.vertices), default=0.0)
     max_y = max((y for r in rooms_with_boundaries for _, y in r.vertices), default=0.0)
