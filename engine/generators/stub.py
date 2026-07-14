@@ -14,6 +14,20 @@ NOTHING ELSE. It does NOT:
   - Emit Layouts that fail schema validation (raise GeneratorFailure
     instead — leaves the audit trail cleaner than Pydantic surfacing
     mid-verifier)
+
+Known Limitations:
+  - Multi-row layouts drop interior walls between rows. When the shelf-
+    packer wraps to a new row and row widths differ, adjacent-row edges
+    partially overlap without sharing endpoints. `_make_walls` uses exact-
+    endpoint dedup (frozenset of corners), so partial overlaps produce two
+    separate exterior walls rather than one interior wall. Layer A still
+    passes on the result (rooms don't overlap, envelope is connected via
+    shared corners), but Layer B connectivity checks WILL flag it and
+    best-of-N (DRAFT 6) will down-score it. This is intentional: the stub
+    is a warm-up target for verifiers, and DRAFT 4's PromptedGenerator
+    won't inherit the limitation. To fix properly, `_make_walls` would
+    need to split overlapping edges into sub-edges at the overlap
+    boundaries — deferred until it becomes a real problem.
 """
 
 from __future__ import annotations
@@ -51,6 +65,21 @@ STUB_WALL_THICKNESS_FT = 0.5
 # authoring expected failures.
 DEFAULT_DOOR_WIDTH_FT = 3.0
 DEFAULT_DOOR_OFFSET_MARGIN_FT = 1.0
+
+# RoomSpec.room_type (intent_parser) has a narrower literal than the Arch C
+# RoomType used by RoomRequirement — it lacks "utility" and "closet". Map
+# any RoomRequirement.room_type value not in this set to "other" when
+# constructing the intermediate RoomSpec. The ORIGINAL RoomRequirement type
+# is preserved for the emitted Layout.Room (which uses the wider literal).
+_ROOM_SPEC_ALLOWED_TYPES = frozenset({
+    "bedroom", "bathroom", "kitchen", "living", "dining",
+    "hallway", "office", "garage", "other",
+})
+
+
+def _map_room_type_for_solver(rt: str) -> str:
+    return rt if rt in _ROOM_SPEC_ALLOWED_TYPES else "other"
+
 
 # Canonical row height applied to every room whose RoomRequirement doesn't
 # specify its own aspect_ratio. The underlying shelf-packer defaults an
@@ -134,7 +163,10 @@ class StubGenerator(LayoutGenerator):
         # Import the existing shelf-packer locally to avoid a hard
         # top-level dependency (also keeps this module import-clean when
         # constraint_solver is being refactored).
-        from engine.constraint_solver.solver import ConstraintSolver
+        from engine.constraint_solver.solver import (
+            ConstraintSolver,
+            ConstraintUnsatisfiableError,
+        )
         from engine.intent_parser.schemas import (
             FloorPlanState,
             RoomSpec,
@@ -144,8 +176,19 @@ class StubGenerator(LayoutGenerator):
         # NOTE: FloorPlanState.rooms is dict[room_id -> RoomSpec] (NOT a
         # list), and RoomSpec has no room_id field of its own — the room
         # id lives only as the dict key.
+        #
+        # Also: RoomRequirement.room_type may include "utility" or "closet"
+        # which the intent_parser RoomSpec.room_type literal doesn't accept.
+        # Map to "other" for the solver's RoomSpec, but keep the ORIGINAL
+        # type for the emitted Layout.Room via room_type_by_id.
         rooms_state: dict[str, RoomSpec] = {}
+        room_type_by_id: dict[str, str] = {}   # original RoomRequirement.room_type
+        room_name_by_id: dict[str, str] = {}   # original RoomRequirement.name
         for i, req in enumerate(spec.room_requirements):
+            room_id = f"room_{i:03d}"
+            room_type_by_id[room_id] = req.room_type
+            room_name_by_id[room_id] = req.name
+
             area = (
                 req.preferred_area_sqft
                 or req.min_area_sqft
@@ -154,10 +197,9 @@ class StubGenerator(LayoutGenerator):
             aspect_ratio = req.aspect_ratio
             if aspect_ratio is None:
                 aspect_ratio = area / (STUB_ROW_HEIGHT_FT ** 2)
-            room_id = f"room_{i:03d}"
             rooms_state[room_id] = RoomSpec(
                 name=req.name,
-                room_type=req.room_type,
+                room_type=_map_room_type_for_solver(req.room_type),
                 area_sqft=area,
                 aspect_ratio=aspect_ratio,
             )
@@ -173,12 +215,19 @@ class StubGenerator(LayoutGenerator):
         solver = ConstraintSolver()
         try:
             matrix = solver.solve(plan_state=plan_state)
-        except Exception as exc:
+        except ConstraintUnsatisfiableError as exc:
             raise GeneratorFailure(
-                message=f"underlying solver failed: {exc}",
+                message=f"solver could not satisfy constraints: {exc}",
                 spec_id=spec.spec_id,
                 generator_name="stub",
                 reason_code="solver_infeasible",
+            ) from exc
+        except Exception as exc:
+            raise GeneratorFailure(
+                message=f"solver raised unexpectedly: {type(exc).__name__}: {exc}",
+                spec_id=spec.spec_id,
+                generator_name="stub",
+                reason_code="solver_internal_error",
             ) from exc
 
         if not matrix:
@@ -194,6 +243,8 @@ class StubGenerator(LayoutGenerator):
             plan_state=plan_state,
             matrix=matrix,
             spec=spec,
+            room_type_by_id=room_type_by_id,
+            room_name_by_id=room_name_by_id,
         )
 
     def _seed_from_spec(self, spec: FloorPlanSpec) -> int:
@@ -246,7 +297,9 @@ def _room_edges_ccw(
 
 
 def _make_rooms(
-    plan_state: Any, matrix: dict[str, dict]
+    matrix: dict[str, dict],
+    room_type_by_id: dict[str, str],
+    room_name_by_id: dict[str, str],
 ) -> tuple[list[_PartialRoom], dict[str, tuple[float, float, float, float]]]:
     """Turn each coordinate_matrix entry into a _PartialRoom + its bbox.
 
@@ -259,12 +312,11 @@ def _make_rooms(
     for room_id, coords in matrix.items():
         x, y, w, h = coords["x"], coords["y"], coords["width"], coords["height"]
         vertices = [(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)]
-        spec = plan_state.rooms[room_id]
         rooms.append(
             _PartialRoom(
                 id=room_id,
-                name=spec.name,
-                room_type=spec.room_type,
+                name=room_name_by_id[room_id],
+                room_type=room_type_by_id[room_id],
                 vertices=vertices,
                 area_sqft=w * h,
             )
@@ -393,16 +445,22 @@ def _matrix_to_layout(
     plan_state: Any,
     matrix: dict[str, dict],
     spec: FloorPlanSpec,
+    room_type_by_id: dict[str, str],
+    room_name_by_id: dict[str, str],
 ) -> Layout:
     """Turn a shelf-packed coordinate_matrix into a typed Layout.
 
     This is where the interesting geometry logic lives. Broken into:
-      - _make_rooms: rectangle → Room with CCW vertices
+      - _make_rooms: rectangle → Room with CCW vertices. Uses
+        room_type_by_id/room_name_by_id to preserve the ORIGINAL
+        RoomRequirement fields (which may include RoomType values like
+        "utility"/"closet" that the intent_parser RoomSpec had to map
+        to "other").
       - _make_walls: dedupe edges shared between rectangles into one
         interior wall bounding two rooms
       - _make_openings: one door per interior wall, centered
     """
-    rooms, room_bboxes = _make_rooms(plan_state, matrix)
+    rooms, room_bboxes = _make_rooms(matrix, room_type_by_id, room_name_by_id)
     walls, wall_bounds_by_edge = _make_walls(rooms, room_bboxes)
     openings, skipped_doors = _make_openings(walls)
 

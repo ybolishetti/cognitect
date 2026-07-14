@@ -73,6 +73,26 @@ def test_same_spec_produces_same_layout_deterministically():
     assert [w.start for w in a.walls] == [w.start for w in b.walls]
 
 
+def test_generate_accepts_utility_and_closet_room_types():
+    """RoomRequirement allows 'utility' and 'closet' but the older
+    intent_parser RoomSpec does not — the stub must map internally."""
+    spec = FloorPlanSpec(
+        spec_id="spec_test_utility_closet",
+        original_nl="test with utility and closet",
+        room_requirements=[
+            RoomRequirement(name="Bedroom", room_type="bedroom", preferred_area_sqft=200.0),
+            RoomRequirement(name="Utility", room_type="utility", preferred_area_sqft=80.0),
+            RoomRequirement(name="Closet", room_type="closet", preferred_area_sqft=40.0),
+        ],
+        n_candidates=1,
+    )
+    layout = StubGenerator().generate(spec)[0]
+    types = {r.room_type for r in layout.rooms}
+    assert "utility" in types
+    assert "closet" in types
+    assert "bedroom" in types
+
+
 # ── Group 3 — Geometry contract (5 tests) ───────────────────────────────────
 
 
@@ -122,6 +142,40 @@ def test_openings_only_on_interior_walls():
             "stub emits openings only on interior walls"
 
 
+def test_multi_row_layout_documents_known_limitation():
+    """Stub can't dedupe partial edge overlaps between rows.
+
+    A 3-room spec with mismatched row widths produces exactly 1 interior
+    wall (the row-1 vertical between rooms 0 and 1), NOT the 2 that a
+    geometrically-correct dedupe would emit. Layer A still passes because
+    rooms don't overlap. This test pins the current behavior — if the
+    interior-wall count changes for this spec, the stub's dedupe logic
+    was modified and this test should be updated deliberately, not
+    silently accepted.
+    """
+    spec = FloorPlanSpec(
+        spec_id="spec_test_multirow",
+        original_nl="3-room layout that forces row 2",
+        room_requirements=[
+            RoomRequirement(name="Living", room_type="living", preferred_area_sqft=200.0),
+            RoomRequirement(name="Kitchen", room_type="kitchen", preferred_area_sqft=150.0),
+            RoomRequirement(name="Bedroom", room_type="bedroom", preferred_area_sqft=180.0),
+        ],
+        n_candidates=1,
+    )
+    layout = StubGenerator().generate(spec)[0]
+    # Verify shelf-packer actually wrapped to a 2nd row (sanity check —
+    # if it doesn't, the test spec is stale)
+    ys = {round(r.vertices[0][1], 2) for r in layout.rooms}
+    assert len(ys) >= 2, "expected shelf-packer to wrap to a second row for this spec"
+    interior = [w for w in layout.walls if len(w.bounds_rooms) == 2]
+    assert len(interior) == 1, (
+        f"stub currently produces exactly 1 interior wall for this multi-row "
+        f"spec (known limitation). Got {len(interior)}. If _make_walls was "
+        f"changed to handle partial edge overlaps, update this test."
+    )
+
+
 # ── Group 4 — Failure modes (2 tests) ───────────────────────────────────────
 
 
@@ -134,7 +188,8 @@ def test_generator_failure_wraps_solver_exceptions():
     assert exc_info.value.generator_name == "stub"
     assert exc_info.value.spec_id == spec.spec_id
     assert exc_info.value.reason_code in {
-        "solver_infeasible", "solver_empty_output", "stub_internal_error",
+        "solver_infeasible", "solver_empty_output",
+        "solver_internal_error", "stub_internal_error",
     }
 
 
