@@ -175,6 +175,75 @@ def save_plan(manager: PlanManager, *, instruction: Optional[str] = None) -> Non
     ).execute()
 
 
+def find_by_materialized_source(
+    *,
+    materialized_from_layout_id: str,
+    user_id: Optional[str],
+    device_id: Optional[str],
+) -> Optional[dict]:
+    """Find an existing plans row with this materialization source, owned by
+    the caller. Returns None if not found.
+    """
+    query = (
+        _client.table("plans")
+        .select("id, name")
+        .eq("materialized_from_layout_id", materialized_from_layout_id)
+        .eq("archived", False)
+        .limit(1)
+    )
+    if user_id:
+        query = query.eq("user_id", user_id)
+    else:
+        query = query.eq("device_id", device_id).is_("user_id", None)
+    res = query.execute()
+    return res.data[0] if res.data else None
+
+
+def create_plan_from_materialized(
+    *,
+    user_id: Optional[str],
+    device_id: Optional[str],
+    name: str,
+    plan_state: dict,
+    materialized_from_layout_id: str,
+) -> str:
+    """Create a new plans row from a materialized Layout. Returns plans.id (UUID).
+
+    Same shape as create_plan but pre-populates state_json with a full plan
+    (rooms + coordinate_matrix) and links back to the source layout.
+    """
+    _require_exactly_one(user_id, device_id)
+
+    new_id = str(uuid.uuid4())
+    # Update the state's inner plan_id to match the DB row UUID (matches
+    # convention in api/routes/plans_v2.py upload_plan handler).
+    plan_state["plan_id"] = new_id
+
+    row = {
+        "id": new_id,
+        "user_id": user_id,
+        "device_id": device_id,
+        "name": name,
+        "state_json": plan_state,
+        "version": 1,
+        "room_count": len(plan_state["rooms"]),
+        "materialized_from_layout_id": materialized_from_layout_id,
+    }
+    _client.table("plans").insert(row).execute()
+    _client.table("plan_versions").insert(
+        {
+            "plan_id": new_id,
+            "version": 1,
+            "state_json": plan_state,
+        }
+    ).execute()
+    logger.info(
+        "Materialized plan %s from layout %s (user_id=%s, device_id=%s)",
+        new_id, materialized_from_layout_id, user_id, device_id,
+    )
+    return new_id
+
+
 def list_plans(*, user_id: str, include_archived: bool = False) -> list[dict]:
     """List an authenticated user's plans, most recently opened first."""
     query = (
