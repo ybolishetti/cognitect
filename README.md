@@ -20,6 +20,17 @@ as in-memory, non-persistent endpoints for backward compatibility.
 `.json` file (multipart, 10 MB max), sharing its DXF/JSON parsing with the
 legacy `/plan/load` route via `engine/importers`.
 
+## How it works
+
+A first-time `/try` visit lands in a structured spec builder (rooms, sizes,
+adjacencies, optional site constraints) instead of a blank auto-created plan.
+Submitting calls `POST /v2/plans/generate`, which runs the request through
+Architecture C's layout pipeline — geometry checks (Layer A) and IRC-2021
+building-code verification (Layer C) — and returns the top scoring
+candidates as a gallery. Returning to an in-progress plan (via a saved link
+or local browser state) skips the spec builder and goes straight into the
+existing natural-language instruction editor.
+
 ## Deployment
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for Fly.io + Supabase setup, local dev

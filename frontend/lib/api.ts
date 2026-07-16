@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { getDeviceId } from "@/lib/device-id";
+import type { RoomType } from "@/lib/constants";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 
@@ -185,4 +186,86 @@ export async function downloadExport(planId: string, format: "dxf" | "pdf"): Pro
   a.download = `${planId}.${format}`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ── Architecture C — FloorPlanSpec + generate flow ──
+// Wire format matches /v2/plans/generate on the backend. See:
+// engine/layout/spec.py and api/routes/plans_v2_generate.py
+
+export type RoomRequirement = {
+  name: string;
+  room_type: RoomType;
+  min_area_sqft?: number;
+  max_area_sqft?: number;
+  preferred_area_sqft?: number;
+  aspect_ratio?: number;
+  adjacencies?: string[];
+  metadata?: Record<string, unknown>;
+};
+
+export type SiteConstraints = {
+  lot_width_ft?: number;
+  lot_depth_ft?: number;
+  setback_front_ft?: number;
+  setback_rear_ft?: number;
+  setback_side_ft?: number;
+  max_footprint_sqft?: number;
+  jurisdiction?: string; // default "IRC-2021"
+  north_bearing_deg?: number; // default 0
+};
+
+export type FloorPlanSpec = {
+  spec_id: string; // must match /^spec_[a-z0-9_]+$/
+  original_nl: string;
+  room_requirements: RoomRequirement[];
+  site_constraints?: SiteConstraints;
+  n_candidates?: number;
+  metadata?: Record<string, unknown>;
+};
+
+export type GenerateLayoutSummary = {
+  selection_rank: number;
+  user_score: number | null;
+  plan_id: string;
+};
+
+export type GenerateResponse = {
+  generated_plan_id: string;
+  spec_hash: string;
+  generator_name: string;
+  generator_version: string;
+  total_candidates: number;
+  survived_layer_a: number;
+  survived_layer_c: number;
+  elapsed_ms: number;
+  layouts: GenerateLayoutSummary[];
+  cached: boolean;
+};
+
+export type GenerateRequest = {
+  spec: FloorPlanSpec;
+  top_k?: number; // default 1, max 8
+  force_regenerate?: boolean;
+};
+
+// Separate export from `api` — do not merge these into the `api` const above.
+export const generateApi = {
+  generatePlan: (req: GenerateRequest): Promise<GenerateResponse> =>
+    apiFetch("/v2/plans/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    }),
+  getGeneratedPlan: (id: string): Promise<GenerateResponse> =>
+    apiFetch(`/v2/plans/generate/${id}`),
+};
+
+// Backend regex: ^spec_[a-z0-9_]+$ — hyphens from crypto.randomUUID() must
+// become underscores, and the whole thing must be lowercase.
+export function generateSpecId(): string {
+  const raw =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+  return `spec_${raw.toLowerCase().replace(/-/g, "_")}`;
 }

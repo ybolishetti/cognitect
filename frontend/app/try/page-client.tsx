@@ -7,26 +7,31 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AuthModal } from "@/components/auth-modal";
 import { PlanEditor } from "@/components/plan-editor/plan-editor";
+import { SpecBuilder } from "@/components/plan-editor/spec-builder";
+import { CandidateGallery } from "@/components/plan-editor/candidate-gallery";
 import { useAuth } from "@/components/providers/auth-provider";
-import { api } from "@/lib/api";
+import { generateApi, type FloorPlanSpec, type GenerateLayoutSummary, type GenerateResponse } from "@/lib/api";
 import { handle429 } from "@/lib/rate-limit";
-import { ANON_PLAN_STORAGE_KEY } from "@/lib/constants";
+import { ANON_PLAN_STORAGE_KEY, DEFAULT_TOP_K } from "@/lib/constants";
 
 // Reconciles two persistence mechanisms the spec docs disagree on: the
 // parent spec's ?plan=<id> URL param and the overlay's localStorage key.
 // localStorage wins (it's what survives a bare /try visit with no query
-// string), and the URL is kept in sync with it for bookmarkability.
+// string), and the URL is kept in sync with it for bookmarkability. Neither
+// present means a first-time visitor — they land in the structured spec
+// builder instead of an auto-created blank plan (see resolvePlan below).
 function TryPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user } = useAuth();
   const [planId, setPlanId] = useState<string | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
-  const [loadError, setLoadError] = useState(false);
+  const [specBuilderMode, setSpecBuilderMode] = useState(false);
+  const [generationResponse, setGenerationResponse] = useState<GenerateResponse | null>(null);
+  const [generating, setGenerating] = useState(false);
   const mountedRef = useRef(true);
 
-  const resolvePlan = useCallback(async () => {
-    setLoadError(false);
+  const resolvePlan = useCallback(() => {
     const stored = localStorage.getItem(ANON_PLAN_STORAGE_KEY);
     if (stored) {
       if (searchParams.get("plan") !== stored) router.replace(`/try?plan=${stored}`);
@@ -41,20 +46,7 @@ function TryPageInner() {
       return;
     }
 
-    try {
-      const { plan_id } = await api.createPlan();
-      localStorage.setItem(ANON_PLAN_STORAGE_KEY, plan_id);
-      router.replace(`/try?plan=${plan_id}`);
-      if (mountedRef.current) setPlanId(plan_id);
-    } catch (e) {
-      if (!mountedRef.current) return;
-      if (handle429(e, { isAnonymous: true, openAuthModal: () => setAuthOpen(true), router })) {
-        setLoadError(true);
-        return;
-      }
-      toast.error(e instanceof Error ? e.message : "Could not start a new plan.");
-      setLoadError(true);
-    }
+    if (mountedRef.current) setSpecBuilderMode(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -67,13 +59,50 @@ function TryPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (loadError) {
+  const handleGenerate = useCallback(
+    async (spec: FloorPlanSpec) => {
+      setGenerating(true);
+      try {
+        const response = await generateApi.generatePlan({ spec, top_k: DEFAULT_TOP_K });
+        if (mountedRef.current) setGenerationResponse(response);
+      } catch (e) {
+        if (handle429(e, { isAnonymous: !user, openAuthModal: () => setAuthOpen(true), router })) return;
+        toast.error(e instanceof Error ? e.message : "Generation failed.");
+      } finally {
+        if (mountedRef.current) setGenerating(false);
+      }
+    },
+    [user, router]
+  );
+
+  const handleGenerateAgain = useCallback(() => setGenerationResponse(null), []);
+
+  // TODO(arch-c-frontend-2): materialize candidate into a plan and route to /plans/<id>
+  const handleUseCandidate = useCallback((_layout: GenerateLayoutSummary) => {
+    toast.info("Preview render coming in the next release.");
+  }, []);
+
+  const signInBanner = !user && (
+    <div className="flex items-center justify-between gap-3 border-b bg-panel px-4 py-2 text-sm">
+      <span className="text-muted-foreground">Sign in to save this plan across devices</span>
+      <Button size="sm" variant="outline" onClick={() => setAuthOpen(true)}>
+        Sign in
+      </Button>
+    </div>
+  );
+
+  if (specBuilderMode) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <p className="text-sm text-muted-foreground">Could not start a new plan.</p>
-        <Button size="sm" variant="outline" onClick={() => resolvePlan()}>
-          Try again
-        </Button>
+      <div className="flex h-full flex-col overflow-y-auto">
+        {signInBanner}
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
+          <CandidateGallery
+            response={generationResponse}
+            onGenerateAgain={handleGenerateAgain}
+            onUseCandidate={handleUseCandidate}
+          />
+          <SpecBuilder onSubmit={handleGenerate} disabled={generating} />
+        </div>
         <AuthModal open={authOpen} onOpenChange={setAuthOpen} />
       </div>
     );
@@ -89,14 +118,7 @@ function TryPageInner() {
 
   return (
     <div className="flex h-full flex-col">
-      {!user && (
-        <div className="flex items-center justify-between gap-3 border-b bg-panel px-4 py-2 text-sm">
-          <span className="text-muted-foreground">Sign in to save this plan across devices</span>
-          <Button size="sm" variant="outline" onClick={() => setAuthOpen(true)}>
-            Sign in
-          </Button>
-        </div>
-      )}
+      {signInBanner}
       <div className="min-h-0 flex-1">
         <PlanEditor planId={planId} anonymous />
       </div>
