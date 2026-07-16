@@ -84,6 +84,62 @@ describe("generateApi", () => {
     expect(init.body).toBeUndefined();
   });
 
+  it("GETs /v2/plans/generate/{id}?include=layout with no body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        generated_plan_id: "gp1",
+        spec_hash: "hash",
+        generator_name: "stub",
+        generator_version: "2026-07-14",
+        total_candidates: 1,
+        survived_layer_a: 1,
+        survived_layer_c: 1,
+        elapsed_ms: 5,
+        layouts: [],
+        cached: true,
+        layouts_full: [],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { generateApi } = await import("@/lib/api");
+    await generateApi.getGeneratedPlanWithLayouts("gp1");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/v2\/plans\/generate\/gp1\?include=layout$/);
+    expect(init.body).toBeUndefined();
+  });
+
+  it("POSTs selection_rank (+ optional name) to the materialize endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        plan_id: "plan-uuid-1",
+        name: "Living + others (candidate 1)",
+        materialized_from_layout_id: "layout-version-uuid-1",
+        created: true,
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { generateApi } = await import("@/lib/api");
+    const result = await generateApi.materializeCandidate("gp1", 0);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/v2\/plans\/generate\/gp1\/materialize$/);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ selection_rank: 0 });
+    expect(result.plan_id).toBe("plan-uuid-1");
+    expect(result.created).toBe(true);
+
+    await generateApi.materializeCandidate("gp1", 1, "My Plan");
+    const [, secondInit] = fetchMock.mock.calls[1];
+    expect(JSON.parse(secondInit.body)).toEqual({ selection_rank: 1, name: "My Plan" });
+  });
+
   it("throws an ApiError with status 422 on a validation error response", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,

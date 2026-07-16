@@ -108,7 +108,7 @@ def load_generated_plan(
     """Load the header row + all layouts. Returns dict with keys:
       id, user_id, device_id, spec_json, spec_hash, generator_name,
       generator_version, total_candidates, survived_layer_a, survived_layer_c,
-      elapsed_ms, created_at, layouts (list of {selection_rank, layout_json, user_score})
+      elapsed_ms, created_at, layouts (list of {id, selection_rank, layout_json, user_score})
 
     Raises GeneratedPlanNotFoundError if row missing or archived.
     Raises GeneratedPlanAccessDeniedError if caller doesn't own it.
@@ -129,7 +129,7 @@ def load_generated_plan(
 
     layouts_res = (
         plan_store._client.table("generated_layout_versions")
-        .select("selection_rank, layout_json, user_score")
+        .select("id, selection_rank, layout_json, user_score")
         .eq("generated_plan_id", generated_plan_id)
         .order("selection_rank")
         .execute()

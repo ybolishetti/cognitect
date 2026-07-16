@@ -240,12 +240,65 @@ export type GenerateResponse = {
   elapsed_ms: number;
   layouts: GenerateLayoutSummary[];
   cached: boolean;
+  layouts_full?: LayoutWithRank[];
 };
 
 export type GenerateRequest = {
   spec: FloorPlanSpec;
   top_k?: number; // default 1, max 8
   force_regenerate?: boolean;
+};
+
+// ── Architecture C — Layout geometry (full Layout returned by ?include=layout) ──
+// Wire format matches engine/layout/schemas.py:Layout
+export type Vertex = [number, number];
+
+export type LayoutRoom = {
+  id: string;
+  name: string;
+  room_type: string; // matches RoomType but backend may add more values later
+  vertices: Vertex[]; // closed polygon (first == last), CCW
+  area_sqft: number;
+  boundary_wall_ids: string[];
+  ceiling_height_ft?: number;
+  metadata?: Record<string, unknown>;
+};
+
+export type LayoutWall = {
+  id: string;
+  start: Vertex;
+  end: Vertex;
+  thickness_ft?: number;
+  bounds_rooms: string[]; // 0, 1, or 2 room ids
+  is_load_bearing?: boolean | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type LayoutOpening = {
+  id: string;
+  opening_type: "door" | "window" | "archway" | "wall_opening";
+  wall_id: string;
+  offset_ft: number;
+  width_ft: number;
+  sill_height_ft?: number;
+  height_ft?: number;
+  swings_into_room_id?: string | null;
+};
+
+export type Layout = {
+  plan_id: string;
+  schema_version: string;
+  rooms: LayoutRoom[];
+  walls: LayoutWall[];
+  openings: LayoutOpening[];
+  extent_x_ft: number;
+  extent_y_ft: number;
+};
+
+export type LayoutWithRank = {
+  selection_rank: number;
+  user_score: number | null;
+  layout: Layout;
 };
 
 // Separate export from `api` — do not merge these into the `api` const above.
@@ -258,6 +311,18 @@ export const generateApi = {
     }),
   getGeneratedPlan: (id: string): Promise<GenerateResponse> =>
     apiFetch(`/v2/plans/generate/${id}`),
+  getGeneratedPlanWithLayouts: (id: string): Promise<GenerateResponse> =>
+    apiFetch(`/v2/plans/generate/${id}?include=layout`),
+  materializeCandidate: (
+    generatedPlanId: string,
+    selectionRank: number,
+    name?: string
+  ): Promise<{ plan_id: string; name: string; materialized_from_layout_id: string; created: boolean }> =>
+    apiFetch(`/v2/plans/generate/${generatedPlanId}/materialize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ selection_rank: selectionRank, ...(name ? { name } : {}) }),
+    }),
 };
 
 // Backend regex: ^spec_[a-z0-9_]+$ — hyphens from crypto.randomUUID() must

@@ -29,6 +29,7 @@ function TryPageInner() {
   const [specBuilderMode, setSpecBuilderMode] = useState(false);
   const [generationResponse, setGenerationResponse] = useState<GenerateResponse | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [materializingRank, setMaterializingRank] = useState<number | null>(null);
   const mountedRef = useRef(true);
 
   const resolvePlan = useCallback(() => {
@@ -64,7 +65,15 @@ function TryPageInner() {
       setGenerating(true);
       try {
         const response = await generateApi.generatePlan({ spec, top_k: DEFAULT_TOP_K });
-        if (mountedRef.current) setGenerationResponse(response);
+        if (!mountedRef.current) return;
+        setGenerationResponse(response);
+        try {
+          const withLayouts = await generateApi.getGeneratedPlanWithLayouts(response.generated_plan_id);
+          if (mountedRef.current) setGenerationResponse(withLayouts);
+        } catch {
+          // Gallery still renders with the summary response and its fallback
+          // placeholder preview — don't block generation on this second call.
+        }
       } catch (e) {
         if (handle429(e, { isAnonymous: !user, openAuthModal: () => setAuthOpen(true), router })) return;
         toast.error(e instanceof Error ? e.message : "Generation failed.");
@@ -75,12 +84,30 @@ function TryPageInner() {
     [user, router]
   );
 
-  const handleGenerateAgain = useCallback(() => setGenerationResponse(null), []);
-
-  // TODO(arch-c-frontend-2): materialize candidate into a plan and route to /plans/<id>
-  const handleUseCandidate = useCallback((_layout: GenerateLayoutSummary) => {
-    toast.info("Preview render coming in the next release.");
+  const handleGenerateAgain = useCallback(() => {
+    setGenerationResponse(null);
+    setMaterializingRank(null);
   }, []);
+
+  const handleUseCandidate = useCallback(
+    async (layout: GenerateLayoutSummary) => {
+      if (!generationResponse) return;
+      setMaterializingRank(layout.selection_rank);
+      try {
+        const { plan_id } = await generateApi.materializeCandidate(
+          generationResponse.generated_plan_id,
+          layout.selection_rank
+        );
+        if (!user) localStorage.setItem(ANON_PLAN_STORAGE_KEY, plan_id);
+        router.push(`/plans/${plan_id}`);
+      } catch (e) {
+        if (handle429(e, { isAnonymous: !user, openAuthModal: () => setAuthOpen(true), router })) return;
+        toast.error(e instanceof Error ? e.message : "Could not open this candidate.");
+        if (mountedRef.current) setMaterializingRank(null);
+      }
+    },
+    [generationResponse, user, router]
+  );
 
   const signInBanner = !user && (
     <div className="flex items-center justify-between gap-3 border-b bg-panel px-4 py-2 text-sm">
@@ -100,6 +127,7 @@ function TryPageInner() {
             response={generationResponse}
             onGenerateAgain={handleGenerateAgain}
             onUseCandidate={handleUseCandidate}
+            materializingRank={materializingRank}
           />
           <SpecBuilder onSubmit={handleGenerate} disabled={generating} />
         </div>

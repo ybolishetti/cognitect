@@ -49,6 +49,17 @@ class GenerateLayoutSummary(BaseModel):
     plan_id: str  # UUID of the generated_layout_versions row for the frontend to fetch later
 
 
+class LayoutWithRank(BaseModel):
+    """Full Layout JSON + its rank. Used when caller passes ?include=layout."""
+
+    selection_rank: int
+    user_score: Optional[float]
+    layout: dict  # Full Layout JSON (engine/layout/schemas.py:Layout.model_dump(mode="json"))
+    # Left as dict and NOT Layout to keep the response permissive — the layout
+    # went through Pydantic validation at generation time; re-validating on read
+    # doubles the CPU on a hot endpoint. The frontend types this as Layout.
+
+
 class GenerateResponse(BaseModel):
     generated_plan_id: str
     spec_hash: str
@@ -60,6 +71,7 @@ class GenerateResponse(BaseModel):
     elapsed_ms: int
     layouts: list[GenerateLayoutSummary]
     cached: bool = False  # true if we returned a cached generation
+    layouts_full: Optional[list[LayoutWithRank]] = None  # populated only when ?include=layout
 
 
 # ── Sync endpoint ─────────────────────────────────────────────────────────────
@@ -208,6 +220,7 @@ async def generate_plan_stream(
 @router.get("/generate/{generated_plan_id}", response_model=GenerateResponse)
 async def get_generated_plan(
     generated_plan_id: str,
+    include: Optional[str] = None,
     owner: tuple = Depends(optional_user),
 ) -> GenerateResponse:
     user, device_id = owner
@@ -222,12 +235,112 @@ async def get_generated_plan(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     except generated_plan_store.GeneratedPlanAccessDeniedError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
-    return _to_response(row, cached_flag=False)
+    return _to_response(row, cached_flag=False, include_layouts=(include == "layout"))
+
+
+class MaterializeRequest(BaseModel):
+    selection_rank: int = Field(default=0, ge=0)
+    name: Optional[str] = Field(default=None, max_length=200)
+
+
+class MaterializeResponse(BaseModel):
+    plan_id: str
+    name: str
+    materialized_from_layout_id: str
+    created: bool  # false if we returned an existing materialization
+
+
+@router.post(
+    "/generate/{generated_plan_id}/materialize",
+    response_model=MaterializeResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def materialize_generated_plan(
+    generated_plan_id: str,
+    req: MaterializeRequest,
+    owner: tuple = Depends(optional_user),
+) -> MaterializeResponse:
+    user, device_id = owner
+    _require_owner(user, device_id)
+
+    try:
+        row = generated_plan_store.load_generated_plan(
+            generated_plan_id,
+            user_id=user.id if user else None,
+            device_id=device_id,
+        )
+    except generated_plan_store.GeneratedPlanNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except generated_plan_store.GeneratedPlanAccessDeniedError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+    layout_row = next(
+        (l for l in row["layouts"] if l["selection_rank"] == req.selection_rank),
+        None,
+    )
+    if layout_row is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"selection_rank {req.selection_rank} not found for generated_plan {generated_plan_id}",
+        )
+    generated_layout_version_id = layout_row["id"]
+    layout_json = layout_row["layout_json"]
+
+    existing = plan_store.find_by_materialized_source(
+        materialized_from_layout_id=generated_layout_version_id,
+        user_id=user.id if user else None,
+        device_id=device_id,
+    )
+    if existing is not None:
+        return MaterializeResponse(
+            plan_id=existing["id"],
+            name=existing["name"],
+            materialized_from_layout_id=generated_layout_version_id,
+            created=False,
+        )
+
+    from engine.materialize import layout_to_plan_state
+
+    plan_name = req.name or _default_plan_name(row["spec_json"], req.selection_rank)
+    plan_state = layout_to_plan_state(layout_json)
+
+    plan_id = plan_store.create_plan_from_materialized(
+        user_id=user.id if user else None,
+        device_id=device_id,
+        name=plan_name,
+        plan_state=plan_state,
+        materialized_from_layout_id=generated_layout_version_id,
+    )
+    return MaterializeResponse(
+        plan_id=plan_id,
+        name=plan_name,
+        materialized_from_layout_id=generated_layout_version_id,
+        created=True,
+    )
+
+
+def _default_plan_name(spec_json: dict, selection_rank: int) -> str:
+    """Derive a plan name from the spec — first room's name + rank suffix."""
+    rooms = (spec_json or {}).get("room_requirements") or []
+    first = rooms[0].get("name") if rooms else None
+    if not first:
+        return f"Generated plan (candidate {selection_rank + 1})"
+    return f"{first[:40]} + others (candidate {selection_rank + 1})"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _to_response(row: dict, cached_flag: bool) -> GenerateResponse:
+def _to_response(row: dict, cached_flag: bool, *, include_layouts: bool = False) -> GenerateResponse:
+    layouts_full = None
+    if include_layouts:
+        layouts_full = [
+            LayoutWithRank(
+                selection_rank=layout["selection_rank"],
+                user_score=layout.get("user_score"),
+                layout=layout["layout_json"],
+            )
+            for layout in row["layouts"]
+        ]
     return GenerateResponse(
         generated_plan_id=row["id"],
         spec_hash=row["spec_hash"],
@@ -242,12 +355,14 @@ def _to_response(row: dict, cached_flag: bool) -> GenerateResponse:
             GenerateLayoutSummary(
                 selection_rank=layout["selection_rank"],
                 user_score=layout.get("user_score"),
-                # Client fetches full Layout JSON via GET /v2/plans/generate/{id};
-                # the summary just gives them the rank + score to render a picker.
+                # plan_id here is the generated_plan_id (parent row), not a
+                # per-candidate UUID. To fetch full geometry, GET
+                # /v2/plans/generate/{id}?include=layout.
                 plan_id=row["id"],
             )
             for layout in row["layouts"]
         ],
+        layouts_full=layouts_full,
     )
 
 
