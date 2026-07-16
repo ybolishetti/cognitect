@@ -11,8 +11,8 @@ import { BlueprintBackground } from "@/components/blueprint-bg";
 const FEATURES = [
   {
     icon: PenTool,
-    title: "Draw",
-    description: "Describe a room in plain English and watch it appear on the plan.",
+    title: "Specify",
+    description: "List the rooms you need — size, type, adjacencies — and let the pipeline do the layout work.",
   },
   {
     icon: Sparkles,
@@ -50,11 +50,11 @@ export function LandingPageClient() {
 
       <section className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-6 pb-20 pt-28 text-center sm:pt-36">
         <h1 className="text-4xl font-bold tracking-tight text-brand sm:text-5xl">
-          Draw floor plans by describing them
+          Design floor plans in seconds.
         </h1>
         <p className="max-w-xl text-lg text-muted-foreground">
-          Cognitect turns natural language into precise, exportable CAD files. DXF, PDF, or
-          direct to your CAD software.
+          Describe your rooms. Cognitect generates 4 candidates, validates each against
+          building code, and shows you the best.
         </p>
         <div className="flex flex-col gap-3 sm:flex-row">
           <Button asChild size="lg">
@@ -64,6 +64,9 @@ export function LandingPageClient() {
             Sign in with Google
           </Button>
         </div>
+        <span className="rounded-full border px-3 py-1 text-xs text-muted-foreground">
+          Powered by kiwisolver + IRC-2021 verifiers
+        </span>
         <Link href="/pricing" className="text-sm text-muted-foreground hover:text-foreground">
           See pricing
         </Link>

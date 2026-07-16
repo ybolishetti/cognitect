@@ -19,3 +19,28 @@ export const EXAMPLES = [
 ];
 
 export const ANON_PLAN_STORAGE_KEY = "cognitect_current_anon_plan";
+
+// Architecture C — matches RoomRequirement.room_type enum in FloorPlanSpec.
+// Keep in sync with backend at engine/layout/spec.py:RoomType.
+export const ROOM_TYPES = [
+  "bedroom",
+  "bathroom",
+  "kitchen",
+  "living",
+  "dining",
+  "hallway",
+  "office",
+  "garage",
+  "closet",
+  "utility",
+  "other",
+] as const;
+export type RoomType = (typeof ROOM_TYPES)[number];
+
+// Default top_k for the /v2/plans/generate call. 4 gives a demo-friendly
+// best-of-N gallery without paying to render 8 candidates.
+export const DEFAULT_TOP_K = 4;
+
+// Default number of candidates the pipeline should GENERATE (inside spec).
+// Backend caps at 32; 8 is the backend default.
+export const DEFAULT_N_CANDIDATES = 8;
