@@ -9,7 +9,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { DEFAULT_N_CANDIDATES, DEFAULT_TOP_K, ROOM_TYPES, type RoomType } from "@/lib/constants";
+import {
+  DEFAULT_N_CANDIDATES,
+  DEFAULT_TOP_K,
+  ROOM_TYPES,
+  ROOM_TYPE_LABELS,
+  type RoomType,
+} from "@/lib/constants";
 import {
   generateSpecId,
   type FloorPlanSpec,
@@ -35,10 +41,6 @@ type RoomRow = {
 // yet, and adding one would be a new dependency for a single dropdown.
 const selectClassName =
   "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 md:text-sm";
-
-function formatRoomType(type: RoomType): string {
-  return type.charAt(0).toUpperCase() + type.slice(1);
-}
 
 let rowIdCounter = 0;
 function nextRowId(): string {
@@ -197,6 +199,10 @@ export function SpecBuilder({ onSubmit, disabled }: SpecBuilderProps) {
           Add rooms, set their sizes, and choose adjacencies. Cognitect generates {DEFAULT_N_CANDIDATES} candidates,
           validates each against building code, and shows you the top scoring layouts.
         </p>
+        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/40 dark:text-amber-200">
+          <strong>Beta note:</strong> First request after idle can take 20–30s while
+          the backend warms up. Subsequent requests return in ~1 second.
+        </div>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -218,7 +224,7 @@ export function SpecBuilder({ onSubmit, disabled }: SpecBuilderProps) {
                 >
                   {ROOM_TYPES.map((type) => (
                     <option key={type} value={type}>
-                      {formatRoomType(type)}
+                      {ROOM_TYPE_LABELS[type]}
                     </option>
                   ))}
                 </select>

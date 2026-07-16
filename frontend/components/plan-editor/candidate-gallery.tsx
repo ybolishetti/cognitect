@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card";
 import { LayoutPreview } from "@/components/plan-editor/layout-preview";
+import { ENABLE_MATERIALIZE } from "@/lib/constants";
 import type { GenerateLayoutSummary, GenerateResponse } from "@/lib/api";
 
 type CandidateGalleryProps = {
@@ -79,9 +80,10 @@ export function CandidateGallery({
               </CardContent>
               <CardFooter>
                 <Button
-                  disabled={materializingRank !== null}
+                  disabled={!ENABLE_MATERIALIZE || materializingRank !== null}
                   onClick={() => onUseCandidate(layout)}
                   className="w-full"
+                  title={!ENABLE_MATERIALIZE ? "Coming soon" : undefined}
                 >
                   {isMaterializing ? (
                     <>

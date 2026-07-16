@@ -37,10 +37,32 @@ export const ROOM_TYPES = [
 ] as const;
 export type RoomType = (typeof ROOM_TYPES)[number];
 
+// Display labels for room_type dropdowns. Wire format uses the raw enum value;
+// this map is UI-only.
+export const ROOM_TYPE_LABELS: Record<RoomType, string> = {
+  bedroom: "Bedroom",
+  bathroom: "Bathroom",
+  kitchen: "Kitchen",
+  living: "Living room",
+  dining: "Dining room",
+  hallway: "Hallway",
+  office: "Office",
+  garage: "Garage",
+  closet: "Closet",
+  utility: "Utility",
+  other: "Other",
+};
+
 // Default top_k for the /v2/plans/generate call. 4 gives a demo-friendly
 // best-of-N gallery without paying to render 8 candidates.
 export const DEFAULT_TOP_K = 4;
 
 // Default number of candidates the pipeline should GENERATE (inside spec).
-// Backend caps at 32; 8 is the backend default.
-export const DEFAULT_N_CANDIDATES = 8;
+// Backend caps at 32; 4 is the demo-friendly candidate count.
+export const DEFAULT_N_CANDIDATES = 4;
+
+// Set NEXT_PUBLIC_ENABLE_MATERIALIZE=true in Vercel env once the backend
+// image with POST /v2/plans/generate/{gpid}/materialize is deployed to
+// production and migration 006 has been applied to Supabase.
+export const ENABLE_MATERIALIZE =
+  process.env.NEXT_PUBLIC_ENABLE_MATERIALIZE === "true";

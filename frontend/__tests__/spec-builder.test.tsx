@@ -31,7 +31,7 @@ describe("SpecBuilder", () => {
     const spec = onSubmit.mock.calls[0][0];
     expect(spec.spec_id).toMatch(/^spec_[a-z0-9_]+$/);
     expect(spec.room_requirements).toHaveLength(3);
-    expect(spec.n_candidates).toBe(8);
+    expect(spec.n_candidates).toBe(4);
     expect(spec.original_nl).toBe("Generate a plan matching the above room requirements.");
     const kitchen = spec.room_requirements.find((r: { name: string }) => r.name === "Kitchen");
     expect(kitchen.adjacencies).toEqual(["Living"]);

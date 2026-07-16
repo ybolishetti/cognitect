@@ -66,8 +66,8 @@ const SECTIONS = [
     body: (
       <p>
         Questions about these terms? Reach out at{" "}
-        <a href="mailto:hello@cognitect.app" className="underline hover:text-foreground">
-          hello@cognitect.app
+        <a href="mailto:yashbolishetti@gmail.com" className="underline hover:text-foreground">
+          yashbolishetti@gmail.com
         </a>
         .
       </p>
@@ -80,11 +80,6 @@ export default function TermsPage() {
     <main className="mx-auto max-w-3xl px-6 py-16">
       <h1 className="text-4xl font-bold tracking-tight text-brand">Terms of Service</h1>
       <p className="mt-2 text-sm text-muted-foreground">Last updated: July 10, 2026</p>
-      <p className="mt-6 rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-        {/* TODO(yash): have a real lawyer review this before public launch */}
-        This is placeholder content for our beta launch. It has not been reviewed by a lawyer
-        and should not be relied on as legal advice.
-      </p>
 
       <div className="mt-10 flex flex-col gap-6">
         {SECTIONS.map(({ title, body }) => (
