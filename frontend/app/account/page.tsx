@@ -60,8 +60,8 @@ export default function AccountPage() {
         </Button>
         <p className="text-sm text-muted-foreground">
           Need to delete your account? Email{" "}
-          <a href="mailto:support@cognitect.app" className="underline">
-            support@cognitect.app
+          <a href="mailto:yashbolishetti@gmail.com" className="underline">
+            yashbolishetti@gmail.com
           </a>
           .
         </p>

@@ -84,6 +84,38 @@ export function LandingPageClient() {
         ))}
       </section>
 
+      <section className="mx-auto mt-24 max-w-4xl px-6">
+        <h2 className="text-3xl font-bold tracking-tight text-brand">
+          For architects and builders
+        </h2>
+        <p className="mt-3 text-lg text-muted-foreground">
+          Built for professionals who need code-compliant, dimensionally-precise output.
+        </p>
+        <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-3">
+          <div>
+            <h3 className="font-semibold">IRC-2021 verified</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Every layout auto-checked for exit reachability, exterior door presence,
+              egress windows per bedroom, and minimum room areas per jurisdiction.
+            </p>
+          </div>
+          <div>
+            <h3 className="font-semibold">Geometry-verified</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Layer A geometry gate catches overlapping rooms, dangling walls,
+              and invalid polygons before you ever see them.
+            </p>
+          </div>
+          <div>
+            <h3 className="font-semibold">CAD-ready export</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Precise DXF and PDF output using kiwisolver constraint math —
+              ready for AutoCAD, Revit, and your existing workflow.
+            </p>
+          </div>
+        </div>
+      </section>
+
       <footer className="border-t px-6 py-8">
         <div className="mx-auto flex max-w-4xl flex-col items-center justify-between gap-4 text-sm text-muted-foreground sm:flex-row">
           <div className="flex items-center gap-4">
