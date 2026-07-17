@@ -14,10 +14,10 @@ describe("SpecBuilder", () => {
     vi.mocked(toast.error).mockClear();
   });
 
-  it("renders with the 3 default rooms pre-filled", () => {
+  it("renders with the 4 default rooms pre-filled", () => {
     render(<SpecBuilder onSubmit={vi.fn()} />);
     const names = screen.getAllByLabelText("Room name").map((el) => (el as HTMLInputElement).value);
-    expect(names).toEqual(["Bedroom 1", "Kitchen", "Living"]);
+    expect(names).toEqual(["Bedroom 1", "Bathroom 1", "Kitchen", "Living"]);
   });
 
   it("submits a valid spec built from the default rooms", async () => {
@@ -30,7 +30,7 @@ describe("SpecBuilder", () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
     const spec = onSubmit.mock.calls[0][0];
     expect(spec.spec_id).toMatch(/^spec_[a-z0-9_]+$/);
-    expect(spec.room_requirements).toHaveLength(3);
+    expect(spec.room_requirements).toHaveLength(4);
     expect(spec.n_candidates).toBe(4);
     expect(spec.original_nl).toBe("Generate a plan matching the above room requirements.");
     const kitchen = spec.room_requirements.find((r: { name: string }) => r.name === "Kitchen");
@@ -41,7 +41,7 @@ describe("SpecBuilder", () => {
     const onSubmit = vi.fn();
     render(<SpecBuilder onSubmit={onSubmit} />);
     const nameInputs = screen.getAllByLabelText("Room name");
-    fireEvent.change(nameInputs[2], { target: { value: "kitchen" } });
+    fireEvent.change(nameInputs[3], { target: { value: "kitchen" } });
     fireEvent.click(screen.getByRole("button", { name: submitButtonName }));
 
     expect(toast.error).toHaveBeenCalled();
