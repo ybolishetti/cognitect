@@ -53,6 +53,7 @@ function nextRowId(): string {
 function defaultRows(): RoomRow[] {
   return [
     { id: nextRowId(), name: "Bedroom 1", roomType: "bedroom", preferredArea: "140", adjacencies: "" },
+    { id: nextRowId(), name: "Bathroom 1", roomType: "bathroom", preferredArea: "50", adjacencies: "Bedroom 1" },
     { id: nextRowId(), name: "Kitchen", roomType: "kitchen", preferredArea: "140", adjacencies: "Living" },
     { id: nextRowId(), name: "Living", roomType: "living", preferredArea: "240", adjacencies: "Kitchen" },
   ];
