@@ -34,8 +34,9 @@ export function CandidateGallery({
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2 text-sm">
             <span>
-              Generated {response.total_candidates} candidates in {response.elapsed_ms}ms · {response.survived_layer_a}{" "}
-              passed geometry · {response.survived_layer_c} passed building code
+              Generated {response.total_candidates} candidate{response.total_candidates === 1 ? "" : "s"} in{" "}
+              {response.elapsed_ms}ms · {response.survived_layer_a} passed geometry ·{" "}
+              {response.survived_layer_c} passed building code
             </span>
             {response.cached && (
               <Badge variant="secondary" title="Same spec as a previous request — returning cached candidates.">

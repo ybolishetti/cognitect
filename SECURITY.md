@@ -3,8 +3,7 @@
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability in Cognitect, please email
-**security@cognitect.app** (or hello@cognitect.app if that address isn't
-provisioned yet — TODO(yash)).
+**yashbolishetti@gmail.com** with subject line `[Security] Cognitect vulnerability`.
 
 Do NOT open a public GitHub issue for security reports.
 
