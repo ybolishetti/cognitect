@@ -79,7 +79,7 @@ export default function TermsPage() {
   return (
     <main className="mx-auto max-w-3xl px-6 py-16">
       <h1 className="text-4xl font-bold tracking-tight text-brand">Terms of Service</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Last updated: July 10, 2026</p>
+      <p className="mt-2 text-sm text-muted-foreground">Last updated: July 20, 2026</p>
 
       <div className="mt-10 flex flex-col gap-6">
         {SECTIONS.map(({ title, body }) => (

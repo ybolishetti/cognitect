@@ -86,17 +86,18 @@ export function LandingPageClient() {
 
       <section className="mx-auto mt-16 max-w-4xl px-6">
         <h2 className="text-3xl font-bold tracking-tight text-brand">
-          For architects and builders
+          For architects
         </h2>
         <p className="mt-3 text-lg text-muted-foreground">
-          Built for professionals who need code-compliant, dimensionally-precise output.
+          Built for practices who need code-compliant, dimensionally-precise output — not AI-vibe sketches.
         </p>
         <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-3">
           <div>
-            <h3 className="font-semibold">IRC-2021 verified</h3>
+            <h3 className="font-semibold">5 IRC-2021 rules verified</h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              Every layout auto-checked for exit reachability, exterior door presence,
-              egress windows per bedroom, and minimum room areas per jurisdiction.
+              Every layout auto-checked against R303.1 (lighting/ventilation), R305.1 (minimum
+              ceiling height), R310.1 (egress windows per bedroom), R311.2 (exterior door), and
+              R311.7 (hallway width). Violations surface before you see the plan.
             </p>
           </div>
           <div>

@@ -46,8 +46,12 @@ const SECTIONS = [
       <>
         <p>We rely on a small number of third-party services:</p>
         <ul className="list-disc space-y-1 pl-5">
+          <li>Google Cloud Platform (Cloud Run), to host the backend API — US region</li>
+          <li>Vercel, to host the web frontend — US region</li>
+          <li>Supabase, to store your account and plan data — US region</li>
           <li>Google OAuth, to authenticate sign-ins</li>
-          <li>Anthropic&apos;s API, to parse the natural-language descriptions you type into floor plans</li>
+          <li>Anthropic&apos;s API, to parse the natural-language descriptions you type and generate floor plan candidates</li>
+          <li>Sentry, to collect anonymous error telemetry for debugging</li>
         </ul>
       </>
     ),
@@ -83,7 +87,7 @@ export default function PrivacyPage() {
   return (
     <main className="mx-auto max-w-3xl px-6 py-16">
       <h1 className="text-4xl font-bold tracking-tight text-brand">Privacy Policy</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Last updated: July 10, 2026</p>
+      <p className="mt-2 text-sm text-muted-foreground">Last updated: July 20, 2026</p>
 
       <div className="mt-10 flex flex-col gap-6">
         {SECTIONS.map(({ title, body }) => (
