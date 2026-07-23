@@ -157,11 +157,19 @@ def find_cached_generation(
     user_id: Optional[str] = None,
     device_id: Optional[str] = None,
     max_age_hours: int = 24,
+    generator_name: Optional[str] = None,
+    generator_version: Optional[str] = None,
 ) -> Optional[dict]:
     """Return the most recent generated_plan for (spec_hash, owner) within max_age_hours,
     or None. Used by /generate to short-circuit — same spec twice returns cached layouts.
 
     The client passes ?force_regenerate=true to bypass this.
+
+    spec_hash is generator-agnostic by design (engine/pipeline/spec_hash.py) — it hashes
+    plan intent, not implementation. So a cache hit must ALSO match the currently active
+    generator's (name, version), or a spec re-requested after a prompt/generator fix would
+    silently replay a stale, possibly non-compliant, cached row. Pass both to scope the
+    lookup; omit either (e.g. in tests) to skip that filter.
     """
     from datetime import datetime, timedelta, timezone
     since_iso = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
@@ -173,6 +181,8 @@ def find_cached_generation(
         .eq("archived", False)
         .gte("created_at", since_iso)
     )
+    if generator_name and generator_version:
+        query = query.eq("generator_name", generator_name).eq("generator_version", generator_version)
     if user_id:
         query = query.eq("user_id", user_id)
     else:

@@ -6,7 +6,7 @@ first-class diffs (not string edits buried in prompted.py).
 
 from __future__ import annotations
 
-PROMPTED_VERSION = "2026-07-14"  # bump on ANY prompt-behavior-affecting change
+PROMPTED_VERSION = "2026-07-21"  # bump on ANY prompt-behavior-affecting change
 
 PROMPTED_SYSTEM_PROMPT = """\
 You are an expert residential architect operating as a floor plan generator.
@@ -86,12 +86,47 @@ both rooms listed in `bounds_rooms`. Do not emit two colinear walls between
 the same pair of rooms. If two rooms share a boundary segment, that
 segment is one wall.
 
-# OPENINGS (DOORS)
+# OPENINGS
 
-Every non-hallway room SHOULD have at least one door. Prefer doors on
-interior walls that connect to a hallway or the room the user requested
-adjacency to. Windows are optional in this DRAFT; if you emit any, put them
-on exterior walls only.
+Every plan MUST have openings that satisfy the following IRC-2021 building
+code requirements. These are HARD gates enforced by Layer C — a candidate
+that fails any of them is discarded entirely, no matter how good its
+geometry is. "Exterior wall" means a wall whose `bounds_rooms` has length 1.
+
+## R311.2 — Primary exit door (HARD)
+
+The plan MUST have at least one door on an EXTERIOR wall, with
+`width_ft >= 3.0`. This is the front door. Place it on the exterior wall of
+whichever room is closest to the front of the lot (y=0) when a lot is
+specified, otherwise any room's exterior wall.
+
+## R310.1 — Bedroom egress (HARD)
+
+Every room with `room_type == "bedroom"` MUST have at least one door OR
+window on one of ITS OWN exterior walls (a wall in that room's
+`boundary_wall_ids` whose `bounds_rooms == [that_room_id]`). A window is
+the typical choice — reserve the room's exterior wall for a window unless
+that same wall is already carrying the R311.2 front door.
+
+## R303.1 — Wet room ventilation (HARD)
+
+Every room with `room_type` in `{"bathroom", "kitchen", "utility"}` MUST
+have at least one opening (door or window) on ANY of its bounding walls —
+interior or exterior. An interior door to a hallway or adjacent room is
+sufficient.
+
+## R311.7 — Hallway width (HARD, only if a hallway room is requested)
+
+If you emit a room with `room_type == "hallway"`, every edge of its polygon
+MUST be >= 3.0 ft. Keep hallways rectangular with short-side >= 3.0 ft.
+
+## General placement (SOFT — best practice, not enforced by Layer C)
+
+- Beyond the HARD requirements above, every non-hallway room SHOULD have at
+  least one door for access.
+- Interior doors typically go on walls shared with a hallway or with the
+  room the user requested adjacency to.
+- Standard `width_ft`: 3.0 for exterior/egress doors, 2.5 for interior doors.
 
 # STRUCTURE OF THE JSON YOU RETURN
 
@@ -101,24 +136,33 @@ return this exact JSON:
 
   {"error": "cannot_generate", "reason": "<one-sentence explanation>"}
 
-# WORKED EXAMPLE (2-ROOM PLAN)
+# WORKED EXAMPLE (2-ROOM PLAN, LAYER-C-PASSING)
 
 For a spec with a 200 sqft Living room and a 150 sqft Bedroom (both
 rectangular, side by side, sharing one interior wall):
 
 - Total footprint ≈ 350 sqft. Try 20' × 17.5' — close to 350.
-- Living: 20' × 10' = 200 sqft, at (0, 0) → (20, 10).
-- Bedroom: 15' × 10' = 150 sqft, at (0, 10) → (15, 20). (Adjust extent.)
-- Better: keep both at the same y-extent by placing them side-by-side:
+- Keep both at the same y-extent, placed side-by-side:
   Living (0,0)→(11.5, 17.5) ≈ 201 sqft; Bedroom (11.5, 0)→(20, 17.5) ≈ 149 sqft.
   Vertical shared wall at x=11.5.
 
 Emit walls for:
-- Living exterior: south (0,0)→(11.5,0); west (0,0)→(0,17.5); north (0,17.5)→(11.5,17.5)
-- Bedroom exterior: south (11.5,0)→(20,0); east (20,0)→(20,17.5); north (11.5,17.5)→(20,17.5)
-- Shared interior wall: (11.5,0)→(11.5,17.5), bounds_rooms = [room_living, room_bedroom]
+- Living exterior: wall_living_south (0,0)→(11.5,0); wall_living_west (0,0)→(0,17.5);
+  wall_living_north (0,17.5)→(11.5,17.5) — each bounds_rooms=[room_living]
+- Bedroom exterior: wall_bedroom_south (11.5,0)→(20,0); wall_bedroom_east (20,0)→(20,17.5);
+  wall_bedroom_north (11.5,17.5)→(20,17.5) — each bounds_rooms=[room_bedroom]
+- Shared interior wall: wall_shared (11.5,0)→(11.5,17.5), bounds_rooms=[room_living, room_bedroom]
 
-Emit one door on the shared wall opening into the bedroom.
+Emit openings to satisfy the HARD rules above:
+- opening_front_door: door, wall_id=wall_living_south, offset_ft=4.0, width_ft=3.0,
+  swings_into_room_id=room_living. This is the front door on Living's exterior wall
+  closest to y=0 — satisfies R311.2.
+- opening_bedroom_window: window, wall_id=wall_bedroom_north, offset_ft=3.0, width_ft=3.0.
+  A window on the Bedroom's own exterior wall — satisfies R310.1.
+- opening_interior_door: door, wall_id=wall_shared, offset_ft=7.0, width_ft=2.5,
+  swings_into_room_id=room_bedroom. Interior access between the two rooms (SOFT
+  best practice, not a Layer C requirement here since the bedroom is already
+  covered by its window).
 
 # REMINDER
 
