@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from typing import AsyncIterator, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -26,13 +27,29 @@ from pydantic import BaseModel, Field
 from api.auth import optional_user
 from api.routes.plans_v2 import _check_rate_limit, _require_owner
 from api.storage import generated_plan_store, plan_store
-from engine.generators import GeneratorFailure
+from engine.generators import FINETUNED_VERSION, GeneratorFailure, PROMPTED_VERSION, STUB_VERSION
 from engine.layout import FloorPlanSpec
 from engine.pipeline import PipelineFailure, run_best_of_n
 from engine.pipeline.spec_hash import spec_hash
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v2/plans", tags=["plans_v2_generate"])
+
+_GENERATOR_VERSIONS = {
+    "stub": STUB_VERSION,
+    "prompted": PROMPTED_VERSION,
+    "finetuned": FINETUNED_VERSION,
+}
+
+
+def _active_generator() -> tuple[str, str]:
+    """The (name, version) of the generator LAYOUT_GENERATOR currently selects.
+
+    Used to scope the cache lookup below — a cached row is only a valid hit if
+    it was produced by this exact generator identity, not merely the same spec.
+    """
+    kind = os.environ.get("LAYOUT_GENERATOR", "stub").lower()
+    return kind, _GENERATOR_VERSIONS.get(kind, "unknown")
 
 
 # ── Request / response models ─────────────────────────────────────────────────
@@ -91,11 +108,14 @@ async def generate_plan(
     # an already-rate-limited caller would incorrectly 429 instead of serving
     # the cached result.
     if not req.force_regenerate:
+        active_name, active_version = _active_generator()
         cached = generated_plan_store.find_cached_generation(
             spec_hash=h,
             user_id=user.id if user else None,
             device_id=device_id,
             max_age_hours=24,
+            generator_name=active_name,
+            generator_version=active_version,
         )
         if cached is not None:
             return _to_response(cached, cached_flag=True)

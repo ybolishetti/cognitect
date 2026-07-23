@@ -253,3 +253,36 @@ def test_find_cached_generation_scoped_to_device_id(fake_supabase):
     )
     assert store.find_cached_generation(spec_hash="hash-dev", device_id=device_b) is None
     assert store.find_cached_generation(spec_hash="hash-dev", device_id=device_a) is not None
+
+
+def test_find_cached_generation_scoped_to_generator_version(fake_supabase):
+    """A cache hit must match the currently active generator's (name, version) —
+    not just the spec content. Otherwise a spec re-requested after a prompt fix
+    (e.g. PROMPTED_VERSION bump) would silently replay a stale, pre-fix row."""
+    store.create_generated_plan(
+        user_id="user-1", spec_json={}, spec_hash="hash-ver", generator_name="prompted",
+        generator_version="2026-07-14", total_candidates=1, survived_layer_a=1,
+        survived_layer_c=1, elapsed_ms=1, top_layouts=[],
+    )
+    stale = store.find_cached_generation(
+        spec_hash="hash-ver", user_id="user-1",
+        generator_name="prompted", generator_version="2026-07-21",
+    )
+    assert stale is None
+
+    fresh = store.find_cached_generation(
+        spec_hash="hash-ver", user_id="user-1",
+        generator_name="prompted", generator_version="2026-07-14",
+    )
+    assert fresh is not None
+
+
+def test_find_cached_generation_skips_generator_filter_when_unspecified(fake_supabase):
+    """Backward-compat: omitting generator_name/version (as older callers and
+    other tests in this file do) skips that filter entirely."""
+    store.create_generated_plan(
+        user_id="user-1", spec_json={}, spec_hash="hash-nofilter", generator_name="prompted",
+        generator_version="2026-07-14", total_candidates=1, survived_layer_a=1,
+        survived_layer_c=1, elapsed_ms=1, top_layouts=[],
+    )
+    assert store.find_cached_generation(spec_hash="hash-nofilter", user_id="user-1") is not None

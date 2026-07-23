@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from engine.generators import GeneratorFailure
+from engine.generators import GeneratorFailure, STUB_VERSION
 from engine.layout import Layout, LayoutAuditManifest, Room, VerifierResult, Wall
 from engine.pipeline import BestOfNResult, PipelineFailure
 from engine.pipeline.spec_hash import spec_hash as compute_spec_hash
@@ -45,7 +45,7 @@ def _make_layout(selection_rank: int = 0, user_score: float = 0.8) -> Layout:
     )
     layout = Layout(plan_id="plan_test1", rooms=[room], walls=walls, extent_x_ft=1000.0, extent_y_ft=1000.0)
     layout.audit = LayoutAuditManifest(
-        generator="stub", generator_version="v1", spec_hash=compute_spec_hash_dict(),
+        generator="stub", generator_version=STUB_VERSION, spec_hash=compute_spec_hash_dict(),
         verifier_results=[
             VerifierResult(verifier_name="layer_a_geometry", passed=True, elapsed_ms=1.0),
             VerifierResult(verifier_name="layer_c_code", passed=True, elapsed_ms=1.0),
@@ -66,7 +66,7 @@ def _make_result(top_k: int = 1) -> BestOfNResult:
     layouts = [_make_layout(selection_rank=i, user_score=0.9 - i * 0.1) for i in range(top_k)]
     return BestOfNResult(
         layouts=layouts, total_candidates=3, survived_layer_a=2, survived_layer_c=2,
-        all_verifier_results={}, elapsed_ms=123.4, generator_name="stub", generator_version="v1",
+        all_verifier_results={}, elapsed_ms=123.4, generator_name="stub", generator_version=STUB_VERSION,
     )
 
 

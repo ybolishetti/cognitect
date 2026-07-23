@@ -19,8 +19,9 @@ import pytest
 import anthropic
 
 from engine.generators import GeneratorFactory, GeneratorFailure, PromptedGenerator
-from engine.generators.prompts import LAYOUT_JSON_SCHEMA, PROMPTED_VERSION
+from engine.generators.prompts import LAYOUT_JSON_SCHEMA, PROMPTED_SYSTEM_PROMPT, PROMPTED_VERSION
 from engine.layout import FloorPlanSpec, Layout, RoomRequirement
+from engine.verifiers import verify_layer_c
 
 
 # ── Mock Anthropic client ───────────────────────────────────────────────────
@@ -131,6 +132,40 @@ def _valid_layout_dict(suffix: str = "a") -> dict:
         "extent_x_ft": 20.0,
         "extent_y_ft": 17.5,
     }
+
+
+def _layer_c_compliant_layout_dict(suffix: str = "a") -> dict:
+    """Layer C-passing 2-room fixture matching the rewritten worked example
+    in engine/generators/prompts/system_prompt.py: a front door on Living's
+    exterior south wall (R311.2), a window on Bedroom's own exterior wall
+    (R310.1), and an interior door on the shared wall (soft best practice)."""
+    d = _valid_layout_dict(suffix)
+    d["openings"] = [
+        {
+            "id": "opening_front_door",
+            "opening_type": "door",
+            "wall_id": "wall_living_south",
+            "offset_ft": 4.0,
+            "width_ft": 3.0,
+            "swings_into_room_id": "room_living",
+        },
+        {
+            "id": "opening_bedroom_window",
+            "opening_type": "window",
+            "wall_id": "wall_bedroom_north",
+            "offset_ft": 3.0,
+            "width_ft": 3.0,
+        },
+        {
+            "id": "opening_interior_door",
+            "opening_type": "door",
+            "wall_id": "wall_shared",
+            "offset_ft": 7.0,
+            "width_ft": 2.5,
+            "swings_into_room_id": "room_bedroom",
+        },
+    ]
+    return d
 
 
 def _api_status_error() -> anthropic.APIStatusError:
@@ -366,6 +401,43 @@ def test_factory_unknown_kind_still_raises_value_error():
 # NOTE: "finetuned" now dispatches to a real FineTunedGenerator placeholder
 # (DRAFT 7) — see tests/test_finetuned_generator.py for its coverage,
 # including the NotImplementedError raised from generate() (not by_name()).
+
+
+# ── Group 8 — Layer C compliance regressions (2026-07-21 prompt fix) ───────
+
+
+def test_worked_example_fixture_passes_layer_c():
+    """The fixture mirroring the prompt's worked example MUST itself pass
+    Layer C. If this fails, the prompt's example is code-noncompliant and
+    Claude will imitate the failure (this is exactly what broke the
+    previous worked example — see PROMPTED_VERSION 2026-07-14)."""
+    layout = Layout(**_layer_c_compliant_layout_dict())
+    result = verify_layer_c(layout)
+    assert result.passed, result.failures
+
+
+def test_prompted_generator_emits_layer_c_passing_layout():
+    mock = _MockAnthropic(responses=[_layer_c_compliant_layout_dict("a")])
+    gen = PromptedGenerator(client=mock)
+    layouts = gen.generate(_make_spec(n_candidates=1))
+    assert len(layouts) == 1
+    result = verify_layer_c(layouts[0])
+    assert result.passed, result.failures
+
+
+def test_system_prompt_cites_layer_c_rule_ids():
+    """Sanity check: the prompt names the IRC rule IDs explicitly, which
+    activates Claude's IRC-2021 training-data knowledge. Catches a future
+    edit that silently drops these citations."""
+    for rule_id in ("R311.2", "R310.1", "R303.1"):
+        assert rule_id in PROMPTED_SYSTEM_PROMPT
+
+
+def test_prompted_version_bumped_to_2026_07_21_or_later():
+    """After the Layer C prompt fix, PROMPTED_VERSION must be at least
+    2026-07-21 — a downgrade would silently re-serve the old, non-compliant
+    prompt's cached rows (see find_cached_generation cache-key fix)."""
+    assert PROMPTED_VERSION >= "2026-07-21"
 
 
 # ── Live test (skipped by default) ──────────────────────────────────────────
